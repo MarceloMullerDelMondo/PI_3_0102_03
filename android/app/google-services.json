@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "442914916078",
+    "project_id": "rpg-puc-survival",
+    "storage_bucket": "rpg-puc-survival.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:442914916078:android:6759b8f1beadf5b52b15ff",
+        "android_client_info": {
+          "package_name": "com.example.rpg_puc_survival"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBphkHfqz0pB0AlbNECDKj0lYOg8ebX_cI"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
