@@ -59,8 +59,7 @@ rpg_puc_survival/
 
 **1. Clone o repositório**
 ```bash
-git clone [https://github.com/seu-usuario/rpg_puc_survival.git](https://github.com/seu-usuario/rpg_puc_survival.git)
-cd rpg_puc_survival
+git clone https://github.com/SeuUsuario/PI_3_0102_03.git cd PI_3_0102_03
 ```
 
 **2. Instale as dependências**
