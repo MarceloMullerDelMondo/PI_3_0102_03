@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:geolocator/geolocator.dart';
 
 /// Resultado tipado de uma tentativa de obter localização.
@@ -20,6 +21,12 @@ class LocationService {
 
   /// Solicita permissões e retorna a posição atual do jogador.
   Future<LocationResult> getCurrentPosition() async {
+    if (kIsWeb) {
+      return LocationFailure(
+        'GPS nativo desativado no navegador.\nUse o modo desenvolvedor para testar no Chrome.',
+      );
+    }
+
     // 1. GPS habilitado no device?
     final serviceEnabled = await Geolocator.isLocationServiceEnabled();
     if (!serviceEnabled) {
@@ -60,10 +67,14 @@ class LocationService {
   }
 
   /// Stream de posição contínua (uso futuro — rastreamento em tempo real).
-  Stream<Position> get positionStream => Geolocator.getPositionStream(
-    locationSettings: const LocationSettings(
-      accuracy: LocationAccuracy.high,
-      distanceFilter: 5,
-    ),
-  );
+  Stream<Position> get positionStream {
+    if (kIsWeb) return const Stream.empty();
+
+    return Geolocator.getPositionStream(
+      locationSettings: const LocationSettings(
+        accuracy: LocationAccuracy.high,
+        distanceFilter: 5,
+      ),
+    );
+  }
 }

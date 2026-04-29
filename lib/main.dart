@@ -1,16 +1,24 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter/foundation.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'firebase_options.dart';
 import 'screens/home_screen.dart';
-// import 'package:firebase_core/firebase_core.dart';
-// import 'firebase_options.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Trava em portrait
-  await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
+  // Orientação bloqueada em portrait
+  try {
+    await SystemChrome.setPreferredOrientations([
+      DeviceOrientation.portraitUp,
+    ]).timeout(const Duration(seconds: 3));
+  } catch (e, st) {
+    debugPrint('SystemChrome.setPreferredOrientations falhou: $e');
+    debugPrintStack(stackTrace: st);
+  }
 
-  // Status bar transparente / ícones claros
+  // Status bar transparente
   SystemChrome.setSystemUIOverlayStyle(
     const SystemUiOverlayStyle(
       statusBarColor: Colors.transparent,
@@ -18,8 +26,17 @@ void main() async {
     ),
   );
 
-  // Descomente após rodar `flutterfire configure`:
-  // await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+  // ── Firebase ──────────────────────────────────────────────────────────────
+  try {
+    await Firebase.initializeApp(
+      options: DefaultFirebaseOptions.currentPlatform,
+    ).timeout(const Duration(seconds: 8));
+  } catch (e, st) {
+    debugPrint(
+      'Firebase.initializeApp falhou${kIsWeb ? ' no Web' : ''}: $e',
+    );
+    debugPrintStack(stackTrace: st);
+  }
 
   runApp(const RpgPucSurvivalApp());
 }
@@ -53,7 +70,7 @@ class RpgPucSurvivalApp extends StatelessWidget {
   }
 }
 
-/// Paleta central do app — usada por todas as telas
+/// Paleta central — usada por todas as telas
 abstract class AppColors {
   static const Color bg = Color(0xFF0A0A0A);
   static const Color surface = Color(0xFF1A1A1A);
