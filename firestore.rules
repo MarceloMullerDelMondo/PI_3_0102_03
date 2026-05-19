@@ -1,0 +1,11 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Phase 1 testing rules: open read/write while validating APK flow.
+    // Replace before production.
+    match /{document=**} {
+      allow read, write: if true;
+    }
+  }
+}

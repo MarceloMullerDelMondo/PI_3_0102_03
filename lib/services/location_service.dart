@@ -19,8 +19,7 @@ class LocationService {
   LocationService._();
   static final LocationService instance = LocationService._();
 
-  /// Solicita permissões e retorna a posição atual do jogador.
-  Future<LocationResult> getCurrentPosition() async {
+  Future<LocationResult?> ensureLocationReady() async {
     if (kIsWeb) {
       return LocationFailure(
         'GPS nativo desativado no navegador.\nUse o modo desenvolvedor para testar no Chrome.',
@@ -51,7 +50,14 @@ class LocationService {
       );
     }
 
-    // 3. Obtém posição com alta precisão (necessário para raio de 50 m)
+    return null;
+  }
+
+  /// Solicita permissões e retorna a posição atual do jogador.
+  Future<LocationResult> getCurrentPosition() async {
+    final failure = await ensureLocationReady();
+    if (failure != null) return failure;
+
     try {
       final position = await Geolocator.getCurrentPosition(
         locationSettings: const LocationSettings(
@@ -66,7 +72,7 @@ class LocationService {
     }
   }
 
-  /// Stream de posição contínua (uso futuro — rastreamento em tempo real).
+  /// Stream puro de posição contínua para consumidores que já tratam permissão.
   Stream<Position> get positionStream {
     if (kIsWeb) return const Stream.empty();
 
@@ -76,5 +82,18 @@ class LocationService {
         distanceFilter: 5,
       ),
     );
+  }
+
+  /// Stream de GPS em tempo real com validação de serviço/permissão embutida.
+  Stream<LocationResult> watchPosition() async* {
+    final failure = await ensureLocationReady();
+    if (failure != null) {
+      yield failure;
+      return;
+    }
+
+    await for (final position in positionStream) {
+      yield LocationSuccess(position);
+    }
   }
 }

@@ -1,6 +1,6 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter/foundation.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'firebase_options.dart';
 import 'screens/home_screen.dart';
@@ -8,17 +8,15 @@ import 'screens/home_screen.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Orientação bloqueada em portrait
+  // Tela inicial em portrait; o jogo muda para landscape ao entrar no H15
   try {
     await SystemChrome.setPreferredOrientations([
       DeviceOrientation.portraitUp,
     ]).timeout(const Duration(seconds: 3));
-  } catch (e, st) {
-    debugPrint('SystemChrome.setPreferredOrientations falhou: $e');
-    debugPrintStack(stackTrace: st);
+  } catch (e) {
+    debugPrint('setPreferredOrientations falhou: $e');
   }
 
-  // Status bar transparente
   SystemChrome.setSystemUIOverlayStyle(
     const SystemUiOverlayStyle(
       statusBarColor: Colors.transparent,
@@ -26,16 +24,12 @@ void main() async {
     ),
   );
 
-  // ── Firebase ──────────────────────────────────────────────────────────────
   try {
     await Firebase.initializeApp(
       options: DefaultFirebaseOptions.currentPlatform,
     ).timeout(const Duration(seconds: 8));
-  } catch (e, st) {
-    debugPrint(
-      'Firebase.initializeApp falhou${kIsWeb ? ' no Web' : ''}: $e',
-    );
-    debugPrintStack(stackTrace: st);
+  } catch (e) {
+    debugPrint('Firebase.initializeApp falhou${kIsWeb ? ' no Web' : ''}: $e');
   }
 
   runApp(const RpgPucSurvivalApp());
@@ -70,7 +64,6 @@ class RpgPucSurvivalApp extends StatelessWidget {
   }
 }
 
-/// Paleta central — usada por todas as telas
 abstract class AppColors {
   static const Color bg = Color(0xFF0A0A0A);
   static const Color surface = Color(0xFF1A1A1A);
