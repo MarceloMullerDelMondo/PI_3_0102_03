@@ -1,4 +1,5 @@
 import 'dart:math';
+import 'package:flame_audio/flame_audio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -488,7 +489,7 @@ class _LoginDialogState extends State<_LoginDialog> {
 // ─────────────────────────────────────────────────────────────────────────────
 // _ProfileDialog — mostra nome, fase e toggle dev mode
 // ─────────────────────────────────────────────────────────────────────────────
-class _ProfileDialog extends StatelessWidget {
+class _ProfileDialog extends StatefulWidget {
   final PlayerProfile profile;
   final bool devMode;
   final Future<void> Function(bool) onToggleDev;
@@ -502,8 +503,26 @@ class _ProfileDialog extends StatelessWidget {
   });
 
   @override
+  State<_ProfileDialog> createState() => _ProfileDialogState();
+}
+
+class _ProfileDialogState extends State<_ProfileDialog> {
+  late bool _devMode;
+
+  @override
+  void initState() {
+    super.initState();
+    _devMode = widget.devMode;
+  }
+
+  void _toggleDev() {
+    setState(() => _devMode = !_devMode);
+    widget.onToggleDev(_devMode);
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final faseLabel = switch (profile.faseAtual) {
+    final faseLabel = switch (widget.profile.faseAtual) {
       1 => 'BLOCO H-15',
       2 => 'BIBLIOTECA CENTRAL',
       3 => 'REFEITÓRIO CENTRAL',
@@ -532,13 +551,13 @@ class _ProfileDialog extends StatelessWidget {
             const SizedBox(height: 16),
 
             // Nome
-            _ProfileRow(label: 'NOME', value: profile.nome),
+            _ProfileRow(label: 'NOME', value: widget.profile.nome),
             const SizedBox(height: 10),
 
             // Fase
             _ProfileRow(
               label: 'FASE ATUAL',
-              value: '${profile.faseAtual.toString().padLeft(2, '0')}/05',
+              value: '${widget.profile.faseAtual.toString().padLeft(2, '0')}/05',
             ),
             const SizedBox(height: 6),
             Container(
@@ -555,11 +574,11 @@ class _ProfileDialog extends StatelessWidget {
             ),
 
             // Itens
-            if (profile.itens.isNotEmpty) ...[
+            if (widget.profile.itens.isNotEmpty) ...[
               const SizedBox(height: 10),
               _ProfileRow(
                 label: 'ITENS',
-                value: profile.itens.join(', '),
+                value: widget.profile.itens.join(', '),
               ),
             ],
 
@@ -583,24 +602,24 @@ class _ProfileDialog extends StatelessWidget {
                   ],
                 ),
                 GestureDetector(
-                  onTap: () => onToggleDev(!devMode),
+                  onTap: _toggleDev,
                   child: Container(
                     padding:
                         const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
                     decoration: BoxDecoration(
                       border: Border.all(
-                        color: devMode ? _C.devGreen : _C.btnBorder,
+                        color: _devMode ? _C.devGreen : _C.btnBorder,
                         width: 1.5,
                       ),
-                      color: devMode
+                      color: _devMode
                           ? _C.devGreen.withValues(alpha: 0.12)
                           : Colors.transparent,
                     ),
                     child: Text(
-                      devMode ? 'ON' : 'OFF',
+                      _devMode ? 'ON' : 'OFF',
                       style: _pixelStyle(
                         10,
-                        color: devMode ? _C.devGreen : _C.hud,
+                        color: _devMode ? _C.devGreen : _C.hud,
                       ),
                     ),
                   ),
@@ -615,7 +634,7 @@ class _ProfileDialog extends StatelessWidget {
               label: '< TROCAR JOGADOR',
               primary: false,
               glowIntensity: 0,
-              onTap: onLogout,
+              onTap: widget.onLogout,
             ),
             const SizedBox(height: 10),
             _PixelButton(
@@ -766,7 +785,7 @@ class _Background extends StatelessWidget {
       decoration: const BoxDecoration(
         color: Colors.black,
         image: DecorationImage(
-          image: AssetImage('assets/images/start_screen.jpg'),
+          image: AssetImage('assets/images/screens/start_screen.jpg'),
           fit: BoxFit.cover,
         ),
       ),
@@ -1197,11 +1216,23 @@ class _OptionsDialog extends StatelessWidget {
           children: [
             Text('OPTIONS', style: _pixelStyle(16, color: _C.amberLight)),
             const SizedBox(height: 20),
-            _OptionRow(label: 'SFX', initial: true),
+            const _OptionRow(label: 'SFX', initial: true),
             const SizedBox(height: 12),
-            _OptionRow(label: 'MÚSICA', initial: true),
+            _OptionRow(
+              label: 'MÚSICA',
+              initial: true,
+              onChanged: (on) {
+                try {
+                  if (on) {
+                    FlameAudio.bgm.resume();
+                  } else {
+                    FlameAudio.bgm.pause();
+                  }
+                } catch (_) {}
+              },
+            ),
             const SizedBox(height: 12),
-            _OptionRow(label: 'VIBRAÇÃO', initial: true),
+            const _OptionRow(label: 'VIBRAÇÃO', initial: true),
             const SizedBox(height: 24),
             _PixelButton(
               label: 'FECHAR',
@@ -1219,7 +1250,8 @@ class _OptionsDialog extends StatelessWidget {
 class _OptionRow extends StatefulWidget {
   final String label;
   final bool initial;
-  const _OptionRow({required this.label, required this.initial});
+  final void Function(bool)? onChanged;
+  const _OptionRow({required this.label, required this.initial, this.onChanged});
 
   @override
   State<_OptionRow> createState() => _OptionRowState();
@@ -1241,7 +1273,10 @@ class _OptionRowState extends State<_OptionRow> {
       children: [
         Text(widget.label, style: _pixelStyle(11, color: _C.hud)),
         GestureDetector(
-          onTap: () => setState(() => _on = !_on),
+          onTap: () {
+            setState(() => _on = !_on);
+            widget.onChanged?.call(_on);
+          },
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
             decoration: BoxDecoration(

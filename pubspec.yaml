@@ -24,6 +24,7 @@ dependencies:
   # Motor de jogo 2D
   flame: ^1.18.0
   flame_tiled: ^3.0.0
+  flame_audio: ^2.1.1
   
 dev_dependencies:
   flutter_test:
@@ -33,11 +34,9 @@ dev_dependencies:
 flutter:
   uses-material-design: true
   assets:
-    - assets/images/start_screen.jpg
-    - assets/images/map_screen.jpg
-    - assets/images/h15_lab.jpg
-    - assets/images/player_sprite.jpg
-    - assets/images/player_espada1mao.png
-    - assets/images/player_espada2mao.png
-    - assets/images/zumbi_normal.png
-    - assets/tiles/h15_collisions.json
+    - assets/images/screens/
+    - assets/images/player/
+    - assets/images/npcs/
+    - assets/images/objects/
+    - assets/images/zumbis/
+    - assets/tiles/

@@ -281,7 +281,7 @@ class _MapSelectionScreenState extends State<MapSelectionScreen>
             decoration: BoxDecoration(
               color: Colors.black,
               image: DecorationImage(
-                image: AssetImage('assets/images/map_screen.jpg'),
+                image: AssetImage('assets/images/screens/map_screen.jpg'),
                 fit: BoxFit.cover,
               ),
             ),

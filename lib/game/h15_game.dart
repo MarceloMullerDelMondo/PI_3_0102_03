@@ -10,6 +10,11 @@ import 'package:flame_tiled/flame_tiled.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+// ── Quest 2 enums — declared at top level so H15Game fields can reference them
+enum GameColor { red, blue, green }
+
+enum Quest2Phase { idle, npcSpawned, dialogueActive, miniGameActive, success }
+
 class H15Game extends FlameGame with HasCollisionDetection {
   static const bool showDebugWalls = false;
   static const bool _enableLegacyIsoCollision = false;
@@ -47,6 +52,9 @@ class H15Game extends FlameGame with HasCollisionDetection {
   final ValueNotifier<bool> gameOver = ValueNotifier(false);
   final ValueNotifier<String?> equippedWeapon = ValueNotifier(null);
   final ValueNotifier<String?> hudMessage = ValueNotifier(null);
+  final ValueNotifier<bool> canTalkToNpc2 = ValueNotifier(false);
+  final ValueNotifier<bool> canInteractGenerator = ValueNotifier(false);
+  final ValueNotifier<Quest2Phase> quest2Phase = ValueNotifier(Quest2Phase.idle);
 
   String? activeZoneId;
   int questState = 0;
@@ -56,7 +64,12 @@ class H15Game extends FlameGame with HasCollisionDetection {
   bool _hordeActive = false;
   bool _hordeCompleted = false;
   int zombiesSpawned = 0;
+  int _pendingSpawns = 0;
   TimerComponent? _hordeTimer;
+
+  // ── Quest 2 / Quest 3 ───────────────────────────────────────────────────────
+  late Quest2Manager quest2Manager;
+  GeneratorComponent? _generator;
 
   // ── Acumuladores ────────────────────────────────────────────────────────────
   double _survivalAccumulator = 0;
@@ -80,7 +93,7 @@ class H15Game extends FlameGame with HasCollisionDetection {
     camera.viewfinder.position = _centralLobbySpawn(_mapSize);
 
     // Background
-    final bgSprite = await loadSprite('h15_lab.jpg');
+    final bgSprite = await loadSprite('screens/h15_lab.jpg');
     _background = SpriteComponent(
       sprite: bgSprite,
       size: _mapSize,
@@ -94,13 +107,15 @@ class H15Game extends FlameGame with HasCollisionDetection {
     _setupNarrativeZones();
 
     // Player
-    final playerImage = await images.load('player_sprite.jpg');
+    final playerImage = await images.load('player/player_sprite.jpg');
     lastCheckpoint = _centralLobbySpawn(_mapSize);
     final playerComponent = PlayerComponent.fromSpriteSheet(playerImage)
       ..position = lastCheckpoint.clone()
       ..priority = 5;
     player = playerComponent;
     await world.add(playerComponent);
+
+    quest2Manager = Quest2Manager(this);
 
     camera.viewfinder.zoom = 1.2;
     camera.setBounds(Rectangle.fromLTWH(0, 0, 2466, 1568));
@@ -362,6 +377,7 @@ class H15Game extends FlameGame with HasCollisionDetection {
     player?.position = lastCheckpoint.clone();
     _clearZombies();
     zombiesSpawned = 0;
+    _pendingSpawns = 0;
     zombiesKilled.value = 0;
     _hordeActive = false;
     _hordeTimer?.removeFromParent();
@@ -395,6 +411,9 @@ class H15Game extends FlameGame with HasCollisionDetection {
       if (attackRect.overlaps(z.hitRect)) {
         final dead = z.takeDamage(_weaponDamage(equippedWeapon.value));
         if (dead) defeated.add(z);
+        world.add(
+          ImpactEffectComponent(position: z.position.clone())..priority = 10,
+        );
       }
     }
 
@@ -411,7 +430,7 @@ class H15Game extends FlameGame with HasCollisionDetection {
   }
 
   int _weaponDamage(String? weapon) {
-    return weapon == 'Duas Adagas' ? 5 : 10;
+    return _random.nextInt(3) + 8; // 8–10 dmg — 2-hit kill on 15 HP zombies
   }
 
   // ── Interação ────────────────────────────────────────────────────────────────
@@ -492,8 +511,8 @@ class H15Game extends FlameGame with HasCollisionDetection {
 
   Future<void> swapPlayerWeaponSpriteSheet(String weapon) async {
     final sheetAsset = weapon == 'Duas Adagas'
-        ? 'player_espada2mao.png'
-        : 'player_espada1mao.png';
+        ? 'player/player_espada2mao.png'
+        : 'player/player_espada1mao.png';
     final sheet = await images.load(sheetAsset);
     player?.useWeaponSpriteSheet(sheet);
   }
@@ -505,6 +524,7 @@ class H15Game extends FlameGame with HasCollisionDetection {
     if (_hordeActive || _hordeCompleted) return;
     _hordeActive = true;
     zombiesSpawned = 0;
+    _pendingSpawns = 0;
 
     // Remove timer anterior se houver
     _hordeTimer?.removeFromParent();
@@ -535,14 +555,28 @@ class H15Game extends FlameGame with HasCollisionDetection {
     final p = player;
     if (p == null) return;
 
-    final spawn = _findSafeZombieSpawn(p.position);
-    if (spawn == null) {
-      debugPrint('Nenhum ponto seguro encontrado para spawn de zumbi.');
-      return;
-    }
+    // On each tick spawn 1 zombie; if there are pending retries from previous
+    // failed ticks, attempt a second spawn to drain the backlog (max 2/tick).
+    final attemptsThisTick = _pendingSpawns > 0 ? 2 : 1;
 
+    for (var i = 0; i < attemptsThisTick; i++) {
+      if (zombiesSpawned >= _hordeTargetKills) break;
+
+      final pos = _findSafeZombieSpawn(p.position);
+      if (pos == null) {
+        _pendingSpawns++;
+        debugPrint('Spawn falhou — pendentes: $_pendingSpawns');
+        continue;
+      }
+
+      if (_pendingSpawns > 0) _pendingSpawns--;
+      _doSpawn(p, pos);
+    }
+  }
+
+  void _doSpawn(PlayerComponent p, Vector2 pos) {
     final zombie = ZombieComponent(target: p)
-      ..position = spawn
+      ..position = pos
       ..priority = 4;
     _zombies.add(zombie);
     zombiesSpawned++;
@@ -550,15 +584,17 @@ class H15Game extends FlameGame with HasCollisionDetection {
   }
 
   Vector2? _findSafeZombieSpawn(Vector2 playerPosition) {
+    // Pass 1: preferred spacing — safe spawn points from Tiled
     if (_safeZombieSpawns.isNotEmpty) {
       final start = _random.nextInt(_safeZombieSpawns.length);
       for (var i = 0; i < _safeZombieSpawns.length; i++) {
         final candidate =
             _safeZombieSpawns[(start + i) % _safeZombieSpawns.length].clone();
-        if (_isSafeZombieSpawn(candidate)) return candidate;
+        if (_isSafeZombieSpawn(candidate, checkEntities: true)) return candidate;
       }
     }
 
+    // Pass 2: preferred spacing — random ring around player
     for (var i = 0; i < _spawnAttemptLimit; i++) {
       final angle = _random.nextDouble() * math.pi * 2;
       final radius = 300.0 + _random.nextDouble() * 260;
@@ -570,13 +606,29 @@ class H15Game extends FlameGame with HasCollisionDetection {
             .clamp(50.0, _mapSize.y - 50)
             .toDouble(),
       );
-      if (_isSafeZombieSpawn(candidate)) return candidate;
+      if (_isSafeZombieSpawn(candidate, checkEntities: true)) return candidate;
+    }
+
+    // Pass 3: fallback — ignore other zombies, only check walls.
+    // Zombies that overlap will separate naturally via _separateFrom.
+    for (var i = 0; i < _spawnAttemptLimit; i++) {
+      final angle = _random.nextDouble() * math.pi * 2;
+      final radius = 200.0 + _random.nextDouble() * 400;
+      final candidate = Vector2(
+        (playerPosition.x + math.cos(angle) * radius)
+            .clamp(50.0, _mapSize.x - 50)
+            .toDouble(),
+        (playerPosition.y + math.sin(angle) * radius)
+            .clamp(50.0, _mapSize.y - 50)
+            .toDouble(),
+      );
+      if (_isSafeZombieSpawn(candidate, checkEntities: false)) return candidate;
     }
 
     return null;
   }
 
-  bool _isSafeZombieSpawn(Vector2 center) {
+  bool _isSafeZombieSpawn(Vector2 center, {bool checkEntities = true}) {
     final rect = _zombieSpawnRect(center);
     if (rect.left < 0 ||
         rect.top < 0 ||
@@ -589,9 +641,14 @@ class H15Game extends FlameGame with HasCollisionDetection {
       if (wall.overlapsRect(rect)) return false;
     }
 
-    for (final zombie in _zombies) {
-      if (rect.overlaps(zombie.hitRect.inflate(_spawnZombieBuffer))) {
-        return false;
+    // Entity check is kept in passes 1 & 2 for visual quality (spacing),
+    // but deliberately skipped in the fallback pass so a crowded map never
+    // permanently blocks the quota from reaching _hordeTargetKills.
+    if (checkEntities) {
+      for (final zombie in _zombies) {
+        if (rect.overlaps(zombie.hitRect.inflate(_spawnZombieBuffer))) {
+          return false;
+        }
       }
     }
 
@@ -623,9 +680,41 @@ class H15Game extends FlameGame with HasCollisionDetection {
     _hordeTimer?.removeFromParent();
     _hordeTimer = null;
     _clearZombies();
-    missionText.value = 'Saguão limpo. Aguarde instruções.';
+    // missionText is NOT set here — _spawnNpc() sets it immediately below
+    // so the tracker jumps straight to the navigation hint, never "waiting".
     missionCompletedPopup.value = true;
-    showHudMessage('Missão Concluída!');
+    showHudMessage('Horda eliminada!');
+    quest2Manager.onHordeCompleted();
+  }
+
+  void talkToNpc2() {
+    if (!canTalkToNpc2.value) return;
+    quest2Manager.startDialogue();
+  }
+
+  void interactGenerator() {
+    if (!canInteractGenerator.value) return;
+    pauseEngine();
+    overlays.add('LightSwitch');
+  }
+
+  void activateGenerator() {
+    overlays.remove('LightSwitch');
+    resumeEngine();
+    _darkness?.removeFromParent();
+    _darkness = null;
+    camera.viewfinder.zoom = 1.0; // wider view — vignette restriction lifted
+    _generator?.removeFromParent();
+    _generator = null;
+    canInteractGenerator.value = false;
+    missionText.value = 'Gerador ativado! Explore o laboratório.';
+    showHudMessage('Energia restaurada!');
+  }
+
+  void spawnGenerator() {
+    final gen = GeneratorComponent(game: this);
+    _generator = gen;
+    world.add(gen);
   }
 
   void closeMissionCompletedPopup() => missionCompletedPopup.value = false;
@@ -734,15 +823,23 @@ class PlayerComponent extends SpriteAnimationGroupComponent<PlayerAnim>
   static const double _speed = 180;
   static const int sheetColumns = 4;
   static const int sheetRows = 3;
-  static const double frameTrim = 1;
+  static const double frameTrim = 1.0;
+  static const double weaponFrameTrim = 2.0;
+  // Hard-coded pixel geometry for player_espada2mao.png (455 × 549, 4 × 3 grid).
+  // frameW = floor(455 / 4) = 113  (avoids the 0.75 fractional bleed)
+  // frameH =       549 / 3  = 183  (exact integer, no rounding needed)
+  static const int _weaponFrameW = 113;
+  static const int _weaponFrameH = 183;
   static const double walkStepTime = 0.14;
   static const double attackStepTime = 0.08;
+  static const double _attackHoldDuration = 0.15;
   static final Vector2 visualSize = Vector2(96, 96);
   static final Vector2 _bodyHBPos = Vector2(34, 40);
   static final Vector2 _bodyHBSize = Vector2(28, 44);
 
   bool _facingLeft = false;
   bool _isAttacking = false;
+  double _attackHoldTimer = 0;
   PlayerAnim _lastMoveAnim = PlayerAnim.walkDown;
   Vector2? _lastSafePos;
 
@@ -786,20 +883,23 @@ class PlayerComponent extends SpriteAnimationGroupComponent<PlayerAnim>
     required int amount,
     required double stepTime,
     bool loop = true,
+    double trim = frameTrim,
   }) {
-    final frameSize =
-        Vector2(image.width / sheetColumns, image.height / sheetRows);
+    // floor() gives integer-aligned frame boundaries so accumulated
+    // floating-point error never pushes a srcPosition into the next frame.
+    final frameW = (image.width / sheetColumns).floorToDouble();
+    final frameH = (image.height / sheetRows).floorToDouble();
     return SpriteAnimation.spriteList(
       List<Sprite>.generate(amount, (column) {
         return Sprite(
           image,
           srcPosition: Vector2(
-            column * frameSize.x + frameTrim,
-            row * frameSize.y + frameTrim,
+            column * frameW + trim,
+            row * frameH + trim,
           ),
           srcSize: Vector2(
-            frameSize.x - frameTrim * 2,
-            frameSize.y - frameTrim * 2,
+            frameW - trim * 2,
+            frameH - trim * 2,
           ),
         );
       }),
@@ -808,13 +908,75 @@ class PlayerComponent extends SpriteAnimationGroupComponent<PlayerAnim>
     );
   }
 
+  // Dedicated slicer for player_espada2mao.png (455 × 549, 4 × 3 grid).
+  // Uses the pinned integer dimensions _weaponFrameW / _weaponFrameH so that
+  // frame positions are always whole-pixel values — no sub-pixel drift possible.
+  static SpriteAnimation _buildWeaponRowAnimation(
+    ui.Image image, {
+    required int row,
+    required int amount,
+    required double stepTime,
+    bool loop = true,
+  }) {
+    const trim = weaponFrameTrim; // 2 px safe-zone on every edge
+    return SpriteAnimation.spriteList(
+      List<Sprite>.generate(amount, (column) {
+        return Sprite(
+          image,
+          srcPosition: Vector2(
+            column * _weaponFrameW + trim,
+            row * _weaponFrameH + trim,
+          ),
+          srcSize: Vector2(
+            _weaponFrameW - trim * 2, // 113 − 4 = 109 px sampled width
+            _weaponFrameH - trim * 2, // 183 − 4 = 179 px sampled height
+          ),
+        );
+      }),
+      stepTime: stepTime,
+      loop: loop,
+    );
+  }
+
+  static Map<PlayerAnim, SpriteAnimation> _weaponAnimationsFromSpriteSheet(
+      ui.Image image) {
+    assert(
+      image.width == 455 && image.height == 549,
+      'player_espada2mao.png deve ter 455×549 px '
+      '(recebido ${image.width}×${image.height})',
+    );
+    SpriteAnimation row(
+      int r, {
+      int n = sheetColumns,
+      double stepTime = walkStepTime,
+      bool loop = true,
+    }) =>
+        _buildWeaponRowAnimation(image,
+            row: r, amount: n, stepTime: stepTime, loop: loop);
+    return {
+      PlayerAnim.idle: row(0, n: 1),
+      PlayerAnim.walkDown: row(0),
+      PlayerAnim.walkRight: row(1),
+      PlayerAnim.walkLeft: row(2),
+      PlayerAnim.walkUp: row(0),
+      PlayerAnim.attackDown: row(0, stepTime: attackStepTime, loop: false),
+      PlayerAnim.attackRight: row(1, stepTime: attackStepTime, loop: false),
+      PlayerAnim.attackLeft: row(2, stepTime: attackStepTime, loop: false),
+      PlayerAnim.attackUp: row(0, stepTime: attackStepTime, loop: false),
+    };
+  }
+
   void useSpriteSheet(ui.Image image) {
     final previous = current ?? PlayerAnim.idle;
     animations = _animationsFromSpriteSheet(image);
     current = previous;
   }
 
-  void useWeaponSpriteSheet(ui.Image image) => useSpriteSheet(image);
+  void useWeaponSpriteSheet(ui.Image image) {
+    final previous = current ?? PlayerAnim.idle;
+    animations = _weaponAnimationsFromSpriteSheet(image);
+    current = previous;
+  }
 
   @override
   Future<void> onLoad() async {
@@ -912,6 +1074,7 @@ class PlayerComponent extends SpriteAnimationGroupComponent<PlayerAnim>
 
   void startAttack() {
     _isAttacking = true;
+    _attackHoldTimer = 0;
     current = switch (_lastMoveAnim) {
       PlayerAnim.walkLeft => PlayerAnim.attackLeft,
       PlayerAnim.walkRight => PlayerAnim.attackRight,
@@ -919,7 +1082,6 @@ class PlayerComponent extends SpriteAnimationGroupComponent<PlayerAnim>
       _ => PlayerAnim.attackDown,
     };
     animationTicker?.reset();
-    setOpacity(0.55);
   }
 
   /// Hitbox de ataque baseada na arma equipada
@@ -935,10 +1097,15 @@ class PlayerComponent extends SpriteAnimationGroupComponent<PlayerAnim>
   @override
   void update(double dt) {
     super.update(dt);
-    if (_isAttacking && (animationTicker?.done() ?? false)) {
-      _isAttacking = false;
-      setOpacity(1);
-      current = PlayerAnim.idle;
+    if (_isAttacking) {
+      if (animationTicker?.done() ?? false) {
+        _attackHoldTimer += dt;
+        if (_attackHoldTimer >= _attackHoldDuration) {
+          _isAttacking = false;
+          _attackHoldTimer = 0;
+          current = PlayerAnim.idle;
+        }
+      }
     }
   }
 
@@ -976,7 +1143,7 @@ class ZombieComponent extends SpriteAnimationComponent
   final PlayerComponent target;
   static const double _speed = 55;
   static const double _playerHitCooldown = 1.2;
-  static const double _playerTouchDamage = 10;
+  static const double _playerTouchDamage = 1; // fixed 1 — test mode
   static final Vector2 _zombieFrameSize = Vector2(148, 140);
   static const double _walkStepTime = 0.15;
   static const double _attackStepTime = 0.08;
@@ -1009,7 +1176,7 @@ class ZombieComponent extends SpriteAnimationComponent
     await super.onLoad();
 
     try {
-      final sheet = await gameRef.images.load('zumbi_normal.png');
+      final sheet = await gameRef.images.load('zumbis/zumbi_normal.png');
       _animations.addAll(_animationsFromSpriteSheet(sheet));
       _setAnimation(ZombieAnim.idle);
     } catch (e) {
@@ -1203,7 +1370,6 @@ class ZombieComponent extends SpriteAnimationComponent
 
   @override
   void render(Canvas canvas) {
-    // Sombra
     canvas.drawOval(
       Rect.fromCenter(
           center: Offset(size.x / 2, size.y + 3),
@@ -1212,7 +1378,9 @@ class ZombieComponent extends SpriteAnimationComponent
       Paint()..color = Colors.black.withValues(alpha: 0.35),
     );
 
-    // Flash vermelho quando toma dano
+    super.render(canvas);
+
+    // Flash drawn after sprite so it composites on top
     if (_hurtFlashTimer > 0) {
       final t = (_hurtFlashTimer / 0.20).clamp(0.0, 1.0);
       canvas.drawRect(
@@ -1220,8 +1388,6 @@ class ZombieComponent extends SpriteAnimationComponent
         Paint()..color = Colors.red.withValues(alpha: t * 0.55),
       );
     }
-
-    super.render(canvas);
   }
 }
 
@@ -1397,5 +1563,267 @@ class DarknessOverlay extends Component with HasGameRef<H15Game> {
     if (p == null) return vpSize / 2;
     final sp = gameRef.camera.localToGlobal(p.position);
     return gameRef.camera.viewport.globalToLocal(sp);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ImpactEffectComponent — canvas-drawn blood-splash spawned on hit
+// ─────────────────────────────────────────────────────────────────────────────
+class _BloodParticle {
+  final Vector2 position = Vector2.zero();
+  Vector2 velocity;
+  final Color color;
+  final double radius;
+  _BloodParticle({
+    required this.velocity,
+    required this.color,
+    required this.radius,
+  });
+}
+
+class ImpactEffectComponent extends PositionComponent {
+  static const double _totalDuration = 0.40;
+  static const int _particleCount = 7;
+  static const List<Color> _palette = [
+    Color(0xFFCC0000),
+    Color(0xFF990000),
+    Color(0xFFFF3333),
+  ];
+
+  double _elapsed = 0;
+  late final List<_BloodParticle> _particles;
+  final math.Random _rng;
+
+  ImpactEffectComponent({required Vector2 position, math.Random? rng})
+      : _rng = rng ?? math.Random(),
+        super(
+          position: position,
+          anchor: Anchor.center,
+          size: Vector2(80, 80),
+        );
+
+  @override
+  Future<void> onLoad() async {
+    await super.onLoad();
+    _particles = List.generate(_particleCount, (i) {
+      final angle =
+          (i / _particleCount) * math.pi * 2 + _rng.nextDouble() * 0.6;
+      final speed = 45.0 + _rng.nextDouble() * 55.0;
+      return _BloodParticle(
+        velocity: Vector2(math.cos(angle) * speed, math.sin(angle) * speed),
+        color: _palette[i % _palette.length],
+        radius: 2.5 + _rng.nextDouble() * 3.0,
+      );
+    });
+  }
+
+  @override
+  void update(double dt) {
+    super.update(dt);
+    _elapsed += dt;
+    if (_elapsed >= _totalDuration) {
+      removeFromParent();
+      return;
+    }
+    for (final p in _particles) {
+      p.position.add(p.velocity * dt);
+      p.velocity.scale(math.max(0, 1 - dt * 6));
+    }
+  }
+
+  @override
+  void render(Canvas canvas) {
+    final t = (_elapsed / _totalDuration).clamp(0.0, 1.0);
+    final alpha = (1.0 - t * t).clamp(0.0, 1.0);
+    final half = size / 2;
+    for (final p in _particles) {
+      canvas.drawCircle(
+        Offset(half.x + p.position.x, half.y + p.position.y),
+        p.radius,
+        Paint()..color = p.color.withValues(alpha: alpha),
+      );
+    }
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Quest2Manager — state machine decoupled from H15Game
+// Transitions: idle → npcSpawned → dialogueActive → miniGameActive → success
+// ─────────────────────────────────────────────────────────────────────────────
+class Quest2Manager {
+  final H15Game game;
+  final math.Random _rng = math.Random();
+
+  // Three rounds with sequences of length 3, 4, 5.
+  // Generated once when dialogue closes; the overlay reads from here.
+  List<List<GameColor>> rounds = const [];
+  Quest2NpcComponent? _npc;
+
+  Quest2Manager(this.game);
+
+  Quest2Phase get phase => game.quest2Phase.value;
+
+  void onHordeCompleted() {
+    if (phase != Quest2Phase.idle) return;
+    _spawnNpc();
+  }
+
+  void _spawnNpc() {
+    final npc = Quest2NpcComponent(manager: this);
+    _npc = npc;
+    game.world.add(npc);
+    game.quest2Phase.value = Quest2Phase.npcSpawned;
+    game.missionText.value = 'Procure o sobrevivente no saguão!';
+    game.showHudMessage('Um sobrevivente apareceu no saguão!');
+  }
+
+  void startDialogue() {
+    if (phase != Quest2Phase.npcSpawned) return;
+    game.quest2Phase.value = Quest2Phase.dialogueActive;
+    game.canTalkToNpc2.value = false;
+    game.pauseEngine();
+    game.overlays.add('Quest2Dialog');
+  }
+
+  void closeDialogue() {
+    game.overlays.remove('Quest2Dialog');
+    // Round 1: 3 colors, Round 2: 4 colors, Round 3: 5 colors.
+    rounds = List.generate(
+      3,
+      (i) => List.generate(
+        i + 3,
+        (_) => GameColor.values[_rng.nextInt(GameColor.values.length)],
+      ),
+    );
+    game.quest2Phase.value = Quest2Phase.miniGameActive;
+    game.overlays.add('ColorGame');
+    // Engine stays paused; overlay manages all 3 rounds internally.
+  }
+
+  void completeColorGame({required bool success}) {
+    game.overlays.remove('ColorGame');
+    game.resumeEngine();
+    if (success) {
+      game.quest2Phase.value = Quest2Phase.success;
+      _npc?.removeFromParent();
+      _npc = null;
+      game.missionText.value = 'Missão: Ative o Gerador de Energia.';
+      game.showHudMessage('Missão 3 concluída!');
+      game.spawnGenerator();
+    } else {
+      game.quest2Phase.value = Quest2Phase.npcSpawned;
+      game.showHudMessage('Sequência errada — tente novamente!');
+    }
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Quest2NpcComponent — Prof. Beatriz Mendonça (npc1beatriz.png), 96×96,
+// same visual scale as the player. Interaction radius 100 px.
+// ─────────────────────────────────────────────────────────────────────────────
+class Quest2NpcComponent extends SpriteComponent {
+  // Calibrate to the brown-sofa pixel in h15_lab.jpg.
+  static final Vector2 _npcWorldPos = Vector2(1100, 820);
+  static const double _interactionRadius = 100;
+
+  final Quest2Manager manager;
+  H15Game get _game => manager.game;
+
+  Quest2NpcComponent({required this.manager})
+      : super(
+          size: Vector2(96, 96),
+          anchor: Anchor.center,
+          position: _npcWorldPos,
+          priority: 3,
+        );
+
+  @override
+  Future<void> onLoad() async {
+    await super.onLoad();
+    try {
+      sprite = Sprite(await _game.images.load('npcs/npc1beatriz.png'));
+    } catch (e) {
+      debugPrint('Beatriz sprite load failed: $e');
+    }
+  }
+
+  @override
+  void update(double dt) {
+    super.update(dt);
+    final p = _game.player;
+    if (p == null) return;
+
+    final inRange = manager.phase == Quest2Phase.npcSpawned &&
+        (p.position - position).length <= _interactionRadius;
+
+    if (_game.canTalkToNpc2.value != inRange) {
+      _game.canTalkToNpc2.value = inRange;
+    }
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GeneratorComponent — geradordeluz.png with a pulsing cyan glow.
+// Spawned after the colour mini-game succeeds; removed when the player
+// activates it via the LightSwitch overlay.
+// ─────────────────────────────────────────────────────────────────────────────
+class GeneratorComponent extends SpriteComponent {
+  // Upper-right room — calibrate to the actual generator position in h15_lab.jpg.
+  static final Vector2 _worldPos = Vector2(2050, 350);
+  static const double _interactionRadius = 120;
+
+  final H15Game game;
+  double _glowTime = 0;
+
+  GeneratorComponent({required this.game})
+      : super(
+          size: Vector2(96, 96),
+          anchor: Anchor.center,
+          position: _worldPos,
+          priority: 4,
+        );
+
+  @override
+  Future<void> onLoad() async {
+    await super.onLoad();
+    try {
+      sprite = Sprite(await game.images.load('objects/geradordeluz.png'));
+    } catch (e) {
+      debugPrint('Generator sprite load failed: $e');
+    }
+  }
+
+  @override
+  void update(double dt) {
+    super.update(dt);
+    _glowTime += dt;
+    final p = game.player;
+    if (p == null) return;
+    final inRange = (p.position - position).length <= _interactionRadius;
+    if (game.canInteractGenerator.value != inRange) {
+      game.canInteractGenerator.value = inRange;
+    }
+  }
+
+  @override
+  void render(Canvas canvas) {
+    // Pulsing cyan rings drawn BEFORE super.render() so they sit behind the sprite.
+    final cx = size.x / 2;
+    final cy = size.y / 2;
+    for (var i = 0; i < 3; i++) {
+      final phase = (_glowTime + i * 0.5) % 1.5;
+      final t = phase / 1.5;
+      final r = 64.0 * (0.3 + t * 0.7);
+      final alpha = (1.0 - t).clamp(0.0, 1.0) * 0.72;
+      canvas.drawCircle(
+        Offset(cx, cy),
+        r,
+        Paint()
+          ..color = const Color(0xFF00FFFF).withValues(alpha: alpha)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 4,
+      );
+    }
+    super.render(canvas);
   }
 }
