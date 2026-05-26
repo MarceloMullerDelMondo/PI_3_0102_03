@@ -97,18 +97,15 @@ class H15Game extends FlameGame with HasCollisionDetection {
     camera.viewfinder.anchor = Anchor.center;
     camera.viewfinder.position = _centralLobbySpawn(_mapSize);
 
-    // Background — carregado em paralelo para não bloquear o primeiro frame
-    final mapSizeSnapshot = _mapSize.clone();
-    loadSprite('screens/h15_lab.jpg').then((bgSprite) {
-      if (!isMounted) return;
-      _background = SpriteComponent(
-        sprite: bgSprite,
-        size: mapSizeSnapshot,
-        position: Vector2.zero(),
-        priority: -10,
-      );
-      world.add(_background!);
-    }).catchError((e) { debugPrint('Background load failed: $e'); return null; });
+    // Background
+    final bgSprite = await loadSprite('screens/h15_lab.jpg');
+    _background = SpriteComponent(
+      sprite: bgSprite,
+      size: _mapSize,
+      position: Vector2.zero(),
+      priority: -10,
+    );
+    world.add(_background!);
 
     if (_enableLegacyIsoCollision) _setupWalls(size);
     if (_enableLegacyQuestZones) _setupInteractables(size);
@@ -719,21 +716,28 @@ class H15Game extends FlameGame with HasCollisionDetection {
 
   void interactGenerator() {
     if (!canInteractGenerator.value) return;
+    questDialogOpen.value = true;
     pauseEngine();
     overlays.add('LightSwitch');
   }
 
   void activateGenerator() {
     overlays.remove('LightSwitch');
+    questDialogOpen.value = false;
     resumeEngine();
     _darkness?.removeFromParent();
     _darkness = null;
-    camera.viewfinder.zoom = 1.0; // wider view — vignette restriction lifted
+    camera.viewfinder.zoom = 1.0;
     _generator?.removeFromParent();
     _generator = null;
     canInteractGenerator.value = false;
-    missionText.value = 'Gerador ativado! Explore o laboratório.';
+    missionText.value = 'Fase concluída!';
     showHudMessage('Energia restaurada!');
+    Future<void>.delayed(const Duration(milliseconds: 1500), () {
+      questDialogOpen.value = true;
+      pauseEngine();
+      overlays.add('LevelComplete');
+    });
   }
 
   void spawnGenerator() {
@@ -1706,6 +1710,7 @@ class Quest2Manager {
     if (phase != Quest2Phase.npcSpawned) return;
     game.quest2Phase.value = Quest2Phase.dialogueActive;
     game.canTalkToNpc2.value = false;
+    game.questDialogOpen.value = true;
     game.pauseEngine();
     game.overlays.add('Quest2Dialog');
   }
@@ -1727,6 +1732,7 @@ class Quest2Manager {
 
   void completeColorGame({required bool success}) {
     game.overlays.remove('ColorGame');
+    game.questDialogOpen.value = false;
     game.resumeEngine();
     if (success) {
       game.quest2Phase.value = Quest2Phase.success;

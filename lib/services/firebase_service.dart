@@ -100,7 +100,27 @@ class FirebaseService {
 
       if (query.docs.isNotEmpty) {
         // ── Jogador existente ───────────────────────────────────────────────
-        profile = PlayerProfile.fromFirestore(query.docs.first.data());
+        final remote = PlayerProfile.fromFirestore(query.docs.first.data());
+        // Take the max fase to never regress progress saved only locally
+        final localPrefs = await SharedPreferences.getInstance();
+        final localFase = localPrefs.getInt(PrefKeys.faseAtual) ?? 1;
+        final bestFase = remote.faseAtual > localFase ? remote.faseAtual : localFase;
+        profile = bestFase == remote.faseAtual
+            ? remote
+            : PlayerProfile(
+                nome: remote.nome,
+                faseAtual: bestFase,
+                itens: remote.itens,
+                escolhas: remote.escolhas,
+                isNew: false,
+              );
+        // Sync the best fase back to Firestore if local was ahead
+        if (bestFase > remote.faseAtual && _firebaseReady) {
+          _players.doc(nomeKey).update({
+            'faseAtual': bestFase,
+            'updatedAt': FieldValue.serverTimestamp(),
+          }).catchError((e) => debugPrint('Sync faseAtual error: $e'));
+        }
       } else {
         // ── Novo jogador ────────────────────────────────────────────────────
         profile = PlayerProfile(
@@ -121,14 +141,14 @@ class FirebaseService {
     } on FirebaseException catch (e) {
       // Regras do Firestore bloquearam ou sem conectividade — usa perfil local
       debugPrint('Firestore bloqueado (${e.code}): ${e.message}');
+      final localPrefs = await SharedPreferences.getInstance();
       final profile = PlayerProfile(
         nome: nomeKey,
-        faseAtual: 1,
-        itens: const [],
+        faseAtual: localPrefs.getInt(PrefKeys.faseAtual) ?? 1,
+        itens: localPrefs.getStringList(PrefKeys.itens) ?? const [],
         escolhas: const [],
-        isNew: true,
+        isNew: false,
       );
-      await _saveToPrefs(profile);
       return profile;
     }
   }
@@ -143,20 +163,28 @@ class FirebaseService {
 
     if (nextFase == faseAtual) return;
 
+    // Always update locally first so the player never loses progress
+    await prefs.setInt(PrefKeys.faseAtual, nextFase);
+
     final nomeKey = nome.trim().toUpperCase();
 
     if (_firebaseReady) {
-      // Atualiza Firestore
-      await _players.doc(nomeKey).update({
-        'faseAtual': nextFase,
-        'updatedAt': FieldValue.serverTimestamp(),
-      }).timeout(const Duration(seconds: 10));
+      try {
+        await _players.doc(nomeKey).set(
+          {
+            'faseAtual': nextFase,
+            'updatedAt': FieldValue.serverTimestamp(),
+          },
+          SetOptions(merge: true),
+        ).timeout(const Duration(seconds: 10));
+      } on FirebaseException catch (e) {
+        debugPrint('Firestore unlockNextPhase error (${e.code}): ${e.message}');
+      } catch (e) {
+        debugPrint('unlockNextPhase error: $e');
+      }
     } else {
       debugPrint('Firebase indisponível; fase atualizada apenas localmente.');
     }
-
-    // Atualiza local
-    await prefs.setInt(PrefKeys.faseAtual, nextFase);
   }
 
   // ── Atualização de itens / escolhas ───────────────────────────────────────

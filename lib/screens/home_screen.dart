@@ -196,13 +196,13 @@ class _HomeScreenState extends State<HomeScreen>
 
   // ── Navegação principal ───────────────────────────────────────────────────
 
-  void _onStartGame() {
+  Future<void> _onStartGame() async {
     if (_profile == null) {
       _showLoginDialog();
       return;
     }
     HapticFeedback.mediumImpact();
-    Navigator.of(context).push(
+    await Navigator.of(context).push(
       PageRouteBuilder(
         pageBuilder: (_, anim, __) => MapSelectionScreen(
           playerName: _profile!.nome,
@@ -213,6 +213,21 @@ class _HomeScreenState extends State<HomeScreen>
         transitionDuration: const Duration(milliseconds: 600),
       ),
     );
+    if (mounted) await _reloadProfileFromPrefs();
+  }
+
+  Future<void> _reloadProfileFromPrefs() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (!mounted || _profile == null) return;
+    setState(() {
+      _profile = PlayerProfile(
+        nome: _profile!.nome,
+        faseAtual: prefs.getInt(PrefKeys.faseAtual) ?? _profile!.faseAtual,
+        itens: prefs.getStringList(PrefKeys.itens) ?? _profile!.itens,
+        escolhas: _profile!.escolhas,
+        isNew: false,
+      );
+    });
   }
 
   void _onOptions() {
@@ -786,7 +801,7 @@ class _Background extends StatelessWidget {
       decoration: const BoxDecoration(
         color: Colors.black,
         image: DecorationImage(
-          image: AssetImage('assets/images/screens/start_screen.jpg'),
+          image: AssetImage('assets/images/screens/start_screen.png'),
           fit: BoxFit.cover,
         ),
       ),

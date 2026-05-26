@@ -42,34 +42,36 @@ class _MapArea {
   });
 }
 
+// relX/relY = centre of the marker as a fraction of live screen size.
+// Calibrated from the user's screenshot (browser 500×875 game area).
 const List<_MapArea> _areas = [
   _MapArea(
     fase: 1,
     nome: 'Bloco H-15',
-    relX: 0.25,
-    relY: 0.65,
-    relW: 0.25,
-    relH: 0.15,
+    relX: 0.23,
+    relY: 0.78,
+    relW: 0.22,
+    relH: 0.16,
     lat: -22.83316,
     lng: -47.05270,
   ),
   _MapArea(
     fase: 2,
     nome: 'Biblioteca Central',
-    relX: 0.28,
-    relY: 0.35,
-    relW: 0.25,
-    relH: 0.15,
+    relX: 0.26,
+    relY: 0.43,
+    relW: 0.22,
+    relH: 0.16,
     lat: -22.83400,
     lng: -47.05350,
   ),
   _MapArea(
     fase: 3,
     nome: 'Refeitório Central',
-    relX: 0.78,
-    relY: 0.38,
-    relW: 0.25,
-    relH: 0.15,
+    relX: 0.79,
+    relY: 0.46,
+    relW: 0.22,
+    relH: 0.16,
     lat: -22.83500,
     lng: -47.05100,
   ),
@@ -77,19 +79,19 @@ const List<_MapArea> _areas = [
     fase: 4,
     nome: 'CAA',
     relX: 0.80,
-    relY: 0.62,
-    relW: 0.25,
-    relH: 0.15,
+    relY: 0.57,
+    relW: 0.22,
+    relH: 0.16,
     lat: -22.83200,
     lng: -47.05450,
   ),
   _MapArea(
     fase: 5,
     nome: 'Reitoria',
-    relX: 0.72,
-    relY: 0.85,
-    relW: 0.25,
-    relH: 0.15,
+    relX: 0.78,
+    relY: 0.87,
+    relW: 0.22,
+    relH: 0.16,
     lat: -22.83100,
     lng: -47.05200,
   ),
@@ -159,14 +161,18 @@ class _MapSelectionScreenState extends State<MapSelectionScreen>
       return;
     }
 
+    // Levels 2+ are not yet implemented
+    if (area.fase > 1) {
+      _showWipDialog(area.fase);
+      return;
+    }
+
     final accessGranted = await _canEnterArea(area);
     if (!accessGranted || !mounted) return;
 
     final completed = await Navigator.of(context).push<bool>(
       MaterialPageRoute(
-        builder: (_) => area.fase == 1
-            ? H15LevelScreen(playerName: widget.playerName)
-            : MissionScreen(fase: area.fase),
+        builder: (_) => H15LevelScreen(playerName: widget.playerName),
       ),
     );
 
@@ -253,6 +259,46 @@ class _MapSelectionScreenState extends State<MapSelectionScreen>
     }
   }
 
+  void _showWipDialog(int fase) {
+    showDialog<void>(
+      context: context,
+      builder: (_) => AlertDialog(
+        backgroundColor: const Color(0xFF1A1208),
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.zero,
+          side: BorderSide(color: Color(0xFFB87A18), width: 2),
+        ),
+        title: Text(
+          'FASE $fase',
+          style: GoogleFonts.pressStart2p(
+            fontSize: 14,
+            color: _C.amberLight,
+          ),
+        ),
+        content: Text(
+          'Fase $fase em\ndesenvolvimento...',
+          style: GoogleFonts.pressStart2p(
+            fontSize: 10,
+            color: _C.hud,
+            height: 1.9,
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: Text(
+              'OK',
+              style: GoogleFonts.pressStart2p(
+                fontSize: 10,
+                color: _C.amberLight,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   void _pixelToast(String message, {required bool isError}) {
     ScaffoldMessenger.of(context)
       ..clearSnackBars()
@@ -281,7 +327,7 @@ class _MapSelectionScreenState extends State<MapSelectionScreen>
             decoration: BoxDecoration(
               color: Colors.black,
               image: DecorationImage(
-                image: AssetImage('assets/images/screens/map_screen.jpg'),
+                image: AssetImage('assets/images/screens/map_screen.png'),
                 fit: BoxFit.cover,
               ),
             ),
@@ -323,50 +369,249 @@ class _MapSelectionScreenState extends State<MapSelectionScreen>
   Widget _buildAreaIcon(_MapArea area) {
     if (_checkingGps && _checkingFase == area.fase) {
       return const SizedBox(
-        width: 24,
-        height: 24,
-        child: CircularProgressIndicator(
-          color: _C.amberLight,
-          strokeWidth: 2,
-        ),
+        width: 28,
+        height: 28,
+        child: CircularProgressIndicator(color: _C.amberLight, strokeWidth: 2),
       );
     }
 
-    if (area.fase < _faseAtual) {
-      return Icon(
-        Icons.check_circle,
-        size: 22,
-        color: Colors.white.withValues(alpha: 0.45),
-      );
-    }
+    final isCompleted = area.fase < _faseAtual;
+    final isLocked = area.fase > _faseAtual;
+    final isActive = area.fase == _faseAtual;
 
-    if (area.fase > _faseAtual) {
-      return Icon(
-        Icons.lock,
-        size: 28,
-        color: Colors.black.withValues(alpha: 0.55),
-      );
-    }
-
-    return AnimatedBuilder(
-      animation: _pinScale,
-      builder: (_, child) => Transform.scale(
-        scale: _pinScale.value,
-        child: child,
-      ),
-      child: Icon(
-        Icons.location_on,
-        size: 38,
-        color: _C.amberLight,
-        shadows: [
-          Shadow(
-            color: _C.amberLight.withValues(alpha: 0.8),
-            blurRadius: 14,
-          ),
-        ],
-      ),
+    return _MapMarker(
+      nome: area.nome,
+      fase: area.fase,
+      isActive: isActive,
+      isCompleted: isCompleted,
+      isLocked: isLocked,
+      pulseAnim: isActive ? _pinScale : null,
     );
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// _MapMarker — pixel-art styled location pin for the map
+// ─────────────────────────────────────────────────────────────────────────────
+class _MapMarker extends StatelessWidget {
+  final String nome;
+  final int fase;
+  final bool isActive;
+  final bool isCompleted;
+  final bool isLocked;
+  final Animation<double>? pulseAnim;
+
+  const _MapMarker({
+    required this.nome,
+    required this.fase,
+    required this.isActive,
+    required this.isCompleted,
+    required this.isLocked,
+    this.pulseAnim,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    if (isActive) {
+      return AnimatedBuilder(
+        animation: pulseAnim!,
+        builder: (_, child) =>
+            Transform.scale(scale: pulseAnim!.value, child: child),
+        child: _ActiveMarker(nome: nome, fase: fase),
+      );
+    }
+    if (isCompleted) return _CompletedMarker(fase: fase);
+    return const _LockedMarker();
+  }
+}
+
+// ── Active ────────────────────────────────────────────────────────────────────
+class _ActiveMarker extends StatelessWidget {
+  final String nome;
+  final int fase;
+  const _ActiveMarker({required this.nome, required this.fase});
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        // Badge
+        Container(
+          width: 52,
+          height: 52,
+          decoration: BoxDecoration(
+            color: const Color(0xFF1C0F02),
+            border: Border.all(color: _C.amberLight, width: 2.5),
+            boxShadow: [
+              BoxShadow(
+                color: _C.amberLight.withValues(alpha: 0.70),
+                blurRadius: 14,
+                spreadRadius: 3,
+              ),
+              const BoxShadow(
+                color: Color(0xAA0A0600),
+                offset: Offset(0, 3),
+                blurRadius: 4,
+              ),
+            ],
+          ),
+          child: Center(
+            child: Text(
+              'F$fase',
+              style: GoogleFonts.pressStart2p(
+                fontSize: 14,
+                color: _C.amberLight,
+                shadows: const [
+                  Shadow(color: Colors.black, offset: Offset(1, 2)),
+                ],
+              ),
+            ),
+          ),
+        ),
+        // Triangular pointer
+        const CustomPaint(
+          size: Size(16, 10),
+          painter: _TrianglePainter(color: _C.amberLight),
+        ),
+        const SizedBox(height: 3),
+        // Name label
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+          decoration: BoxDecoration(
+            color: const Color(0xEE1A0E02),
+            border: Border.all(
+              color: _C.amber.withValues(alpha: 0.65),
+              width: 1,
+            ),
+          ),
+          child: Text(
+            nome,
+            textAlign: TextAlign.center,
+            style: GoogleFonts.pressStart2p(
+              fontSize: 5,
+              color: _C.hud,
+              height: 1.6,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+// ── Completed ─────────────────────────────────────────────────────────────────
+class _CompletedMarker extends StatelessWidget {
+  final int fase;
+  const _CompletedMarker({required this.fase});
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 36,
+          height: 36,
+          decoration: BoxDecoration(
+            color: const Color(0xFF071207),
+            border: Border.all(
+              color: const Color(0xFF4ADE80).withValues(alpha: 0.6),
+              width: 2,
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: const Color(0xFF4ADE80).withValues(alpha: 0.28),
+                blurRadius: 8,
+                spreadRadius: 1,
+              ),
+            ],
+          ),
+          child: Center(
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                Text(
+                  'F$fase',
+                  style: GoogleFonts.pressStart2p(
+                    fontSize: 8,
+                    color: const Color(0xFF4ADE80).withValues(alpha: 0.45),
+                  ),
+                ),
+                const Icon(Icons.check_rounded,
+                    color: Color(0xFF4ADE80), size: 20),
+              ],
+            ),
+          ),
+        ),
+        CustomPaint(
+          size: const Size(10, 7),
+          painter: _TrianglePainter(
+            color: const Color(0xFF4ADE80).withValues(alpha: 0.6),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+// ── Locked ────────────────────────────────────────────────────────────────────
+class _LockedMarker extends StatelessWidget {
+  const _LockedMarker();
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 34,
+          height: 34,
+          decoration: BoxDecoration(
+            color: Colors.black.withValues(alpha: 0.50),
+            border: Border.all(
+              color: Colors.white.withValues(alpha: 0.18),
+              width: 1.5,
+            ),
+          ),
+          child: Center(
+            child: Icon(
+              Icons.lock,
+              color: Colors.white.withValues(alpha: 0.30),
+              size: 16,
+            ),
+          ),
+        ),
+        CustomPaint(
+          size: const Size(10, 7),
+          painter: _TrianglePainter(
+            color: Colors.white.withValues(alpha: 0.18),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+// ── Triangle pointer ──────────────────────────────────────────────────────────
+class _TrianglePainter extends CustomPainter {
+  final Color color;
+  const _TrianglePainter({required this.color});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    canvas.drawPath(
+      Path()
+        ..moveTo(0, 0)
+        ..lineTo(size.width, 0)
+        ..lineTo(size.width / 2, size.height)
+        ..close(),
+      Paint()..color = color,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _TrianglePainter old) => old.color != color;
 }
 
 class _BackButton extends StatelessWidget {

@@ -67,6 +67,7 @@ class _H15LevelScreenState extends State<H15LevelScreen>
         children: [
           GameWidget<H15Game>(
             game: _game,
+            loadingBuilder: (_) => const _H15LoadingScreen(),
             overlayBuilderMap: {
               'QuestDialog': (context, game) => QuestOverlay(game: game),
               'ServerDialog': (context, game) => ServerOverlay(game: game),
@@ -74,6 +75,7 @@ class _H15LevelScreenState extends State<H15LevelScreen>
               'Quest2Dialog': (context, game) => Quest2DialogOverlay(game: game),
               'ColorGame': (context, game) => ColorGameOverlay(game: game),
               'LightSwitch': (context, game) => LightSwitchOverlay(game: game),
+              'LevelComplete': (context, game) => LevelCompleteOverlay(game: game),
             },
           ),
           ValueListenableBuilder<bool>(
@@ -90,6 +92,45 @@ class _H15LevelScreenState extends State<H15LevelScreen>
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// _H15LoadingScreen — exibida enquanto o onLoad do H15Game está em andamento
+// ─────────────────────────────────────────────────────────────────────────────
+class _H15LoadingScreen extends StatelessWidget {
+  const _H15LoadingScreen();
+
+  @override
+  Widget build(BuildContext context) {
+    return const ColoredBox(
+      color: Colors.black,
+      child: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            SizedBox(
+              width: 36,
+              height: 36,
+              child: CircularProgressIndicator(
+                color: Color(0xFFD4860A),
+                strokeWidth: 3,
+              ),
+            ),
+            SizedBox(height: 20),
+            Text(
+              'CARREGANDO...',
+              style: TextStyle(
+                color: Color(0xFFD4860A),
+                fontSize: 12,
+                fontFamily: 'monospace',
+                letterSpacing: 2,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -1575,6 +1616,7 @@ class _LightSwitchOverlayState extends State<LightSwitchOverlay> {
     });
     Future<void>.delayed(const Duration(milliseconds: 1200), () {
       widget.game.activateGenerator();
+      // overlay is removed inside activateGenerator()
     });
   }
 
@@ -1753,6 +1795,97 @@ class _LightSwitchOverlayState extends State<LightSwitchOverlay> {
                 ],
               ),
             ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// LevelCompleteOverlay — shown after the generator is activated (end of Fase 1)
+// ─────────────────────────────────────────────────────────────────────────────
+class LevelCompleteOverlay extends StatelessWidget {
+  final H15Game game;
+  const LevelCompleteOverlay({super.key, required this.game});
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.black.withValues(alpha: 0.85),
+      child: Center(
+        child: Container(
+          constraints: const BoxConstraints(maxWidth: 560),
+          margin: const EdgeInsets.all(24),
+          padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 36),
+          decoration: BoxDecoration(
+            color: const Color(0xF20A1A0A),
+            border: Border.all(color: const Color(0xFF22C55E), width: 3),
+            boxShadow: const [
+              BoxShadow(color: Color(0xAA000000), offset: Offset(5, 5)),
+              BoxShadow(
+                color: Color(0x8816A34A),
+                blurRadius: 36,
+                spreadRadius: 6,
+              ),
+            ],
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                'FASE 1 CONCLUÍDA!',
+                textAlign: TextAlign.center,
+                style: GoogleFonts.pressStart2p(
+                  fontSize: 20,
+                  color: const Color(0xFF4ADE80),
+                  height: 1.4,
+                  shadows: const [
+                    Shadow(color: Color(0xFF052E16), offset: Offset(3, 3)),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 20),
+              Text(
+                'Vá para a próxima fase!',
+                textAlign: TextAlign.center,
+                style: GoogleFonts.pressStart2p(
+                  fontSize: 11,
+                  color: const Color(0xFFFFF3B0),
+                  height: 1.9,
+                  shadows: const [
+                    Shadow(color: Colors.black, offset: Offset(2, 2), blurRadius: 3),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 32),
+              GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: () => Navigator.of(context).pop(true),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 16),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF052E16),
+                    border: Border.all(color: const Color(0xFF22C55E), width: 2.5),
+                    boxShadow: const [
+                      BoxShadow(color: Color(0x8816A34A), blurRadius: 14),
+                    ],
+                  ),
+                  child: Text(
+                    'PRÓXIMO NÍVEL',
+                    textAlign: TextAlign.center,
+                    style: GoogleFonts.pressStart2p(
+                      fontSize: 12,
+                      color: const Color(0xFF86EFAC),
+                      height: 1.5,
+                      shadows: const [
+                        Shadow(color: Colors.black, offset: Offset(2, 2), blurRadius: 3),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ],
           ),
         ),
       ),
