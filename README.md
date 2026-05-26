@@ -57,24 +57,19 @@ rpg_puc_survival/
 
 ### Configuração do Ambiente
 
-**1. Clone o repositório**
-```bash
-git clone https://github.com/SeuUsuario/PI_3_0102_03.git cd PI_3_0102_03
-```
-
-**2. Instale as dependências**
+**1. Instale as dependências**
 ```bash
 flutter pub get
 ```
 
-**3. Configure o Firebase (Se necessário reconstruir as chaves)**
+**2. Configure o Firebase (Se necessário reconstruir as chaves)**
 * Certifique-se de ter o FlutterFire CLI instalado.
 * Rode o comando na raiz do projeto para gerar o `firebase_options.dart`:
 ```bash
 flutterfire configure
 ```
 
-**4. Execute o projeto**
+**3. Execute o projeto**
 Para testar a lógica de GPS de forma estática via navegador:
 ```bash
 flutter run -d chrome
