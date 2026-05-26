@@ -10,12 +10,17 @@ import 'package:flame_tiled/flame_tiled.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../services/firebase_service.dart';
+
 // ── Quest 2 enums — declared at top level so H15Game fields can reference them
 enum GameColor { red, blue, green }
 
 enum Quest2Phase { idle, npcSpawned, dialogueActive, miniGameActive, success }
 
 class H15Game extends FlameGame with HasCollisionDetection {
+  final String playerName;
+  H15Game({this.playerName = ''});
+
   static const bool showDebugWalls = false;
   static const bool _enableLegacyIsoCollision = false;
   static const bool _enableLegacyQuestZones = false;
@@ -92,21 +97,24 @@ class H15Game extends FlameGame with HasCollisionDetection {
     camera.viewfinder.anchor = Anchor.center;
     camera.viewfinder.position = _centralLobbySpawn(_mapSize);
 
-    // Background
-    final bgSprite = await loadSprite('screens/h15_lab.jpg');
-    _background = SpriteComponent(
-      sprite: bgSprite,
-      size: _mapSize,
-      position: Vector2.zero(),
-      priority: -10,
-    );
-    world.add(_background!);
+    // Background — carregado em paralelo para não bloquear o primeiro frame
+    final mapSizeSnapshot = _mapSize.clone();
+    loadSprite('screens/h15_lab.jpg').then((bgSprite) {
+      if (!isMounted) return;
+      _background = SpriteComponent(
+        sprite: bgSprite,
+        size: mapSizeSnapshot,
+        position: Vector2.zero(),
+        priority: -10,
+      );
+      world.add(_background!);
+    }).catchError((e) { debugPrint('Background load failed: $e'); return null; });
 
     if (_enableLegacyIsoCollision) _setupWalls(size);
     if (_enableLegacyQuestZones) _setupInteractables(size);
     _setupNarrativeZones();
 
-    // Player
+    // Player e joystick carregados em paralelo
     final playerImage = await images.load('player/player_sprite.jpg');
     lastCheckpoint = _centralLobbySpawn(_mapSize);
     final playerComponent = PlayerComponent.fromSpriteSheet(playerImage)
@@ -116,6 +124,19 @@ class H15Game extends FlameGame with HasCollisionDetection {
     await world.add(playerComponent);
 
     quest2Manager = Quest2Manager(this);
+
+    // Restaurar arma salva da sessão anterior
+    final savedWeapon = await FirebaseService.instance.loadWeapon();
+    if (savedWeapon != null && savedWeapon.isNotEmpty) {
+      equippedWeapon.value = savedWeapon;
+      attackEnabled.value = true;
+      questState = 3;
+      canReadPaper.value = false;
+      missionText.value = 'Sobreviva à horda (0/$_hordeTargetKills)';
+      await swapPlayerWeaponSpriteSheet(savedWeapon);
+      showHudMessage('Arma restaurada: $savedWeapon');
+      iniciarHorda();
+    }
 
     camera.viewfinder.zoom = 1.2;
     camera.setBounds(Rectangle.fromLTWH(0, 0, 2466, 1568));
@@ -507,6 +528,10 @@ class H15Game extends FlameGame with HasCollisionDetection {
     await swapPlayerWeaponSpriteSheet(weapon);
     iniciarHorda();
     showHudMessage('Arma Equipada!');
+    // Persiste localmente e no Firestore para restaurar na próxima sessão
+    FirebaseService.instance
+        .saveWeapon(playerName, weapon)
+        .catchError((e) => debugPrint('saveWeapon error: $e'));
   }
 
   Future<void> swapPlayerWeaponSpriteSheet(String weapon) async {

@@ -2,7 +2,21 @@
   "permissions": {
     "allow": [
       "Bash(dart analyze *)",
-      "Bash(flutter pub *)"
+      "Bash(flutter pub *)",
+      "Bash(flutter --version)",
+      "Bash(adb devices *)",
+      "PowerShell(flutter devices 2>&1)",
+      "PowerShell(flutter emulators 2>&1)",
+      "PowerShell(flutter config 2>&1)",
+      "Bash(Get-Item \"c:\\\\projetos\\\\rpg_puc_survival\\\\assets\\\\tiles\\\\h15_collisions.json\")",
+      "Bash(Select-Object Name, Length)",
+      "Bash(Format-Table)",
+      "PowerShell(Get-Item \"c:\\\\projetos\\\\rpg_puc_survival\\\\assets\\\\tiles\\\\h15_collisions.json\" | Select-Object Name, @{N='Size_KB';E={[math]::Round\\($_.Length/1KB,1\\)}})",
+      "PowerShell($f = \"c:\\\\projetos\\\\rpg_puc_survival\\\\assets\\\\tiles\\\\h15_collisions.json\"; if \\(Test-Path $f\\) { $size = \\(Get-Item $f\\).Length; Write-Host \"Size: $\\([math]::Round\\($size/1KB, 1\\)\\) KB \\($size bytes\\)\" } else { Write-Host \"File not found\" })",
+      "PowerShell(Get-ChildItem \"c:\\\\projetos\\\\rpg_puc_survival\\\\assets\\\\images\" -Recurse | Sort-Object Length -Descending | Select-Object -First 10 Name, @{N='KB';E={[math]::Round\\($_.Length/1KB,1\\)}})",
+      "PowerShell(Get-ChildItem \"c:\\\\projetos\\\\rpg_puc_survival\\\\assets\" -Recurse -File | Sort-Object Length -Descending | Select-Object -First 15 Name, @{N='KB';E={[math]::Round\\($_.Length/1KB,1\\)}}, DirectoryName | Format-Table -AutoSize)",
+      "PowerShell(flutter config --list 2>&1)",
+      "PowerShell($env:PATH += \";C:\\\\Users\\\\marce\\\\AppData\\\\Local\\\\Android\\\\Sdk\\\\platform-tools\"; adb -s emulator-5554 logcat -d --pid=$\\(adb -s emulator-5554 shell pidof com.example.rpg_puc_survival 2>$null\\) 2>$null | Select-String -Pattern \"FATAL|AndroidRuntime|flutter|Exception|Error|Crash\" | Select-Object -Last 40)"
     ]
   }
 }

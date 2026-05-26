@@ -11,7 +11,8 @@ import '../game/h15_game.dart';
 // H15LevelScreen — forçar landscape ao entrar, portrait ao sair
 // ─────────────────────────────────────────────────────────────────────────────
 class H15LevelScreen extends StatefulWidget {
-  const H15LevelScreen({super.key});
+  final String playerName;
+  const H15LevelScreen({super.key, required this.playerName});
 
   @override
   State<H15LevelScreen> createState() => _H15LevelScreenState();
@@ -25,7 +26,7 @@ class _H15LevelScreenState extends State<H15LevelScreen>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _game = H15Game();
+    _game = H15Game(playerName: widget.playerName);
     _setLandscape();
   }
 

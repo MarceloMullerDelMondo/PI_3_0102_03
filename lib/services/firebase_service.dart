@@ -11,6 +11,7 @@ abstract class PrefKeys {
   static const faseAtual = 'rpg_puc_fase_atual';
   static const itens = 'rpg_player_itens';
   static const devMode = 'rpg_dev_mode';
+  static const h15Weapon = 'rpg_h15_weapon'; // arma escolhida no H-15
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -88,37 +89,48 @@ class FirebaseService {
     }
 
     // 1. Tenta buscar pelo nome (campo indexado)
-    final query = await _players
-        .where('nome', isEqualTo: nomeKey)
-        .limit(1)
-        .get()
-        .timeout(const Duration(seconds: 10));
+    try {
+      final query = await _players
+          .where('nome', isEqualTo: nomeKey)
+          .limit(1)
+          .get()
+          .timeout(const Duration(seconds: 10));
 
-    PlayerProfile profile;
+      PlayerProfile profile;
 
-    if (query.docs.isNotEmpty) {
-      // ── Jogador existente ─────────────────────────────────────────────────
-      final doc = query.docs.first;
-      profile = PlayerProfile.fromFirestore(doc.data());
-    } else {
-      // ── Novo jogador ──────────────────────────────────────────────────────
-      profile = PlayerProfile(
+      if (query.docs.isNotEmpty) {
+        // ── Jogador existente ───────────────────────────────────────────────
+        profile = PlayerProfile.fromFirestore(query.docs.first.data());
+      } else {
+        // ── Novo jogador ────────────────────────────────────────────────────
+        profile = PlayerProfile(
+          nome: nomeKey,
+          faseAtual: 1,
+          itens: [],
+          escolhas: [],
+          isNew: true,
+        );
+        await _players.doc(nomeKey).set({
+          ...profile.toFirestore(),
+          'createdAt': FieldValue.serverTimestamp(),
+        }).timeout(const Duration(seconds: 10));
+      }
+
+      await _saveToPrefs(profile);
+      return profile;
+    } on FirebaseException catch (e) {
+      // Regras do Firestore bloquearam ou sem conectividade — usa perfil local
+      debugPrint('Firestore bloqueado (${e.code}): ${e.message}');
+      final profile = PlayerProfile(
         nome: nomeKey,
         faseAtual: 1,
-        itens: [],
-        escolhas: [],
+        itens: const [],
+        escolhas: const [],
         isNew: true,
       );
-      // Usa o nome como ID do documento para facilitar lookups futuros
-      await _players.doc(nomeKey).set({
-        ...profile.toFirestore(),
-        'createdAt': FieldValue.serverTimestamp(),
-      }).timeout(const Duration(seconds: 10));
+      await _saveToPrefs(profile);
+      return profile;
     }
-
-    // 2. Sincroniza com SharedPreferences
-    await _saveToPrefs(profile);
-    return profile;
   }
 
   // ── Atualização de fase ────────────────────────────────────────────────────
@@ -163,6 +175,24 @@ class FirebaseService {
     final itens = prefs.getStringList(PrefKeys.itens) ?? [];
     itens.add(item);
     await prefs.setStringList(PrefKeys.itens, itens);
+  }
+
+  // ── Arma equipada no H-15 ────────────────────────────────────────────────
+
+  Future<void> saveWeapon(String nome, String weapon) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(PrefKeys.h15Weapon, weapon);
+    if (_firebaseReady) {
+      _players.doc(nome.trim().toUpperCase()).update({
+        'h15Weapon': weapon,
+        'updatedAt': FieldValue.serverTimestamp(),
+      }).catchError((e) => debugPrint('Firestore saveWeapon error: $e'));
+    }
+  }
+
+  Future<String?> loadWeapon() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString(PrefKeys.h15Weapon);
   }
 
   // ── Leitura local (sem network) ───────────────────────────────────────────

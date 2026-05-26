@@ -165,7 +165,7 @@ class _MapSelectionScreenState extends State<MapSelectionScreen>
     final completed = await Navigator.of(context).push<bool>(
       MaterialPageRoute(
         builder: (_) => area.fase == 1
-            ? const H15LevelScreen()
+            ? H15LevelScreen(playerName: widget.playerName)
             : MissionScreen(fase: area.fase),
       ),
     );

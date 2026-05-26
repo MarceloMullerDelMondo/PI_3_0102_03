@@ -175,6 +175,7 @@ class _HomeScreenState extends State<HomeScreen>
     await prefs.remove(PrefKeys.playerName);
     await prefs.remove(PrefKeys.faseAtual);
     await prefs.remove(PrefKeys.itens);
+    await prefs.remove(PrefKeys.h15Weapon);
     if (!mounted) return;
     setState(() => _profile = null);
     _showLoginDialog();

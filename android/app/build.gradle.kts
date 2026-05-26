@@ -9,7 +9,7 @@ plugins {
 }
 
 android {
-    namespace = "com.example.rpg_puc_campinas"
+    namespace = "com.example.rpg_puc_survival"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
@@ -23,14 +23,14 @@ android {
     }
 
     defaultConfig {
-        // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
         applicationId = "com.example.rpg_puc_survival"
-        // You can update the following values to match your application needs.
-        // For more information, see: https://flutter.dev/to/review-gradle-config.
+        // geolocator 13.x requires API 23+; flame_audio requires API 21+
         minSdk = flutter.minSdkVersion
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+        // Needed when total method count exceeds 64K (Firebase + Flame + geolocator)
+        multiDexEnabled = true
     }
 
     buildTypes {
