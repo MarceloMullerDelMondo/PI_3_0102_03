@@ -1,10 +1,10 @@
 import 'dart:math';
-import 'package:flame_audio/flame_audio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../services/audio_manager.dart';
 import '../services/firebase_service.dart';
 import 'map_selection_screen.dart';
 
@@ -71,6 +71,8 @@ class _HomeScreenState extends State<HomeScreen>
   @override
   void dispose() {
     _glow.dispose();
+    // Stop BGM when the root screen is permanently removed (app closing).
+    AudioManager.instance.stopMenuBgm();
     super.dispose();
   }
 
@@ -104,6 +106,10 @@ class _HomeScreenState extends State<HomeScreen>
         _showLoginDialog();
       });
     }
+
+    // Inicia a BGM aqui — depois dos awaits de SharedPreferences/Firebase,
+    // o subsistema de áudio da plataforma já está inicializado.
+    AudioManager.instance.playMenuBgm();
   }
 
   // ── Dialogs ───────────────────────────────────────────────────────────────
@@ -1236,16 +1242,8 @@ class _OptionsDialog extends StatelessWidget {
             const SizedBox(height: 12),
             _OptionRow(
               label: 'MÚSICA',
-              initial: true,
-              onChanged: (on) {
-                try {
-                  if (on) {
-                    FlameAudio.bgm.resume();
-                  } else {
-                    FlameAudio.bgm.pause();
-                  }
-                } catch (_) {}
-              },
+              initial: AudioManager.instance.musicEnabled,
+              onChanged: (on) => AudioManager.instance.setMusicEnabled(on),
             ),
             const SizedBox(height: 12),
             const _OptionRow(label: 'VIBRAÇÃO', initial: true),

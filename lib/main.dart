@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'firebase_options.dart';
 import 'screens/home_screen.dart';
+import 'services/audio_manager.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -31,6 +32,9 @@ void main() async {
   } catch (e) {
     debugPrint('Firebase.initializeApp falhou${kIsWeb ? ' no Web' : ''}: $e');
   }
+
+  // Load persisted music ON/OFF preference before the first frame.
+  await AudioManager.instance.init();
 
   runApp(const RpgPucSurvivalApp());
 }

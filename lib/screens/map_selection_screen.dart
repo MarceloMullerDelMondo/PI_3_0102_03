@@ -6,6 +6,7 @@ import 'package:geolocator/geolocator.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../services/audio_manager.dart';
 import '../services/firebase_service.dart';
 import 'h15_level_screen.dart';
 
@@ -170,11 +171,20 @@ class _MapSelectionScreenState extends State<MapSelectionScreen>
     final accessGranted = await _canEnterArea(area);
     if (!accessGranted || !mounted) return;
 
-    final completed = await Navigator.of(context).push<bool>(
+    // Capture navigator before any await to avoid cross-async-gap context use.
+    final navigator = Navigator.of(context);
+
+    // Stop the menu BGM before entering the level so there is no overlap.
+    await AudioManager.instance.stopMenuBgm();
+
+    final completed = await navigator.push<bool>(
       MaterialPageRoute(
         builder: (_) => H15LevelScreen(playerName: widget.playerName),
       ),
     );
+
+    // Restore menu BGM when returning from the level (respects music ON/OFF).
+    if (mounted) await AudioManager.instance.resumeMenuBgm();
 
     if (completed == true && mounted && area.fase == _faseAtual) {
       await FirebaseService.instance.unlockNextPhase(widget.playerName);
