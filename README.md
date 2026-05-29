@@ -1,82 +1,76 @@
----
+# PUC Survival RPG
 
-# Projeto Integrador 3: PUC Survival RPG 🧟‍♂️📍
+RPG de sobrevivência 2D com geolocalização, desenvolvido em Flutter + Flame para a disciplina de Projeto Integrador III — Sistemas de Informação, PUC-Campinas.
 
-Este projeto tem como objetivo desenvolver um RPG mobile de sobrevivência baseado em geolocalização para a disciplina de Projeto Integrador III do curso de Sistemas de Informação da PUC-Campinas. O jogo utiliza o mundo real (focado no Campus I) como mapa para uma narrativa imersiva de sobrevivência e gestão de recursos pós-apocalíptica.
-
-## 🛠️ Tecnologias Utilizadas
-
-* **Flutter & Dart:** Framework principal para o desenvolvimento multiplataforma.
-* **Firebase (Firestore):** Banco de dados em tempo real e em nuvem para salvar o progresso, inventário e decisões do jogador.
-* **Geolocator:** Pacote para leitura e validação de coordenadas de GPS em tempo real.
-* **Flame:** Motor de jogo 2D integrado ao Flutter para renderização de elementos gráficos e HUDs.
+O campus vira o mapa: o jogador precisa estar fisicamente perto de um ponto real (Bloco H-15) para desbloquear a fase.
 
 ---
 
-## 📱 Funcionalidades e Módulos do Jogo
+## Início rápido
 
-O aplicativo transforma o ambiente universitário em zonas de exploração, onde o jogador precisa se mover fisicamente para interagir com o jogo.
+**Pré-requisito:** Flutter SDK ≥ 3.3.0
 
-### 📌 Módulo de Exploração (Geolocalização)
-* **Leitura de GPS em Tempo Real:** Rastreio do jogador para liberação de eventos baseados em proximidade.
-* **Validação de Raio (50m):** O jogador só consegue interagir com os pontos de interesse (ex: Bloco H-15) se estiver fisicamente próximo às coordenadas cadastradas.
-* **Cadastro Estático de Ambientes:** Mapeamento de locais chave do campus (Laboratórios, Biblioteca, etc.).
-
-### 📌 Módulo de Narrativa e Sobrevivência
-* **Interação com NPCs:** Diálogos e missões acionados por localização (ex: Encontro com o Dr. Álvaro no Laboratório).
-* **Sistema de Inventário:** Escolha e armazenamento de itens de sobrevivência (Facão, Taco) persistidos no Firestore.
-* **Interface Imersiva:** Tema "Dark" pós-apocalíptico com painéis de status (Scanning, Found, Error).
-
----
-
-## 📂 Estrutura do Projeto
-
-```text
-rpg_puc_survival/
-├── lib/
-│   ├── game/               # Lógica do motor Flame (SurvivalGame)
-│   ├── models/             # Classes de dados (Environment, etc.)
-│   ├── screens/            # Telas da interface gráfica (home_screen, game_screen)
-│   ├── services/           # Regras de negócio e APIs (location_service)
-│   ├── main.dart           # Ponto de entrada da aplicação
-│   └── firebase_options.dart # Configurações de conexão do Firebase
-├── android/                # Configurações nativas Android
-├── web/                    # Configurações nativas Web
-├── pubspec.yaml            # Gerenciador de dependências
-└── README.md               # Documentação do projeto
-```
-
----
-
-## 🚀 Como Executar o Projeto
-
-### Pré-requisitos
-* **Flutter SDK** (versão 3.3.0 ou superior)
-* **Android Studio** (para emuladores ou compilação nativa) ou **Google Chrome** (para testes Web)
-* Conta Google configurada no **Firebase Console**
-
-### Configuração do Ambiente
-
-**1. Instale as dependências**
 ```bash
 flutter pub get
-```
-
-**2. Configure o Firebase (Se necessário reconstruir as chaves)**
-* Certifique-se de ter o FlutterFire CLI instalado.
-* Rode o comando na raiz do projeto para gerar o `firebase_options.dart`:
-```bash
-flutterfire configure
-```
-
-**3. Execute o projeto**
-Para testar a lógica de GPS de forma estática via navegador:
-```bash
-flutter run -d chrome
-```
-Para testar no seu dispositivo físico Android (com GPS real):
-```bash
 flutter run
 ```
 
+O Flutter detecta os dispositivos disponíveis e pergunta onde rodar. Escolha entre dispositivo Android físico (GPS real) ou emulador/Chrome (modo dev sem GPS).
+
+Para rodar diretamente num alvo específico:
+
+```bash
+flutter run -d android   # dispositivo Android conectado
+flutter run -d chrome    # navegador (GPS desativado — use o botão DEV MODE)
+```
+
+> **Firebase:** o arquivo `firebase_options.dart` já está configurado. Se precisar reconfigurar as chaves do projeto, instale o FlutterFire CLI e rode `flutterfire configure` na raiz.
+
 ---
+
+## O que tem de diferente
+
+### Geolocalização real
+- O jogo lê o GPS em tempo real via `geolocator`.
+- Cada fase fica bloqueada até o jogador estar dentro de um raio de **50 metros** das coordenadas do ponto no campus.
+- No modo desenvolvedor (`DEV MODE`, acessível pela tela de mapa), o GPS é ignorado para testes sem precisar estar no local.
+
+### Motor de jogo 2D (Flame)
+- A fase H-15 usa o Flame como engine: mapa de colisões carregado de JSON (Tiled), sistema de sprites, joystick virtual, câmera com follow e zoom.
+- Zumbis com IA de perseguição, sistema de dano, horda com timer e efeitos de impacto em canvas.
+
+### Progressão persistida no Firebase
+- Arma equipada e progresso de missão são salvos no Firestore e restaurados na próxima sessão.
+- O jogador consegue continuar de onde parou mesmo após fechar o app.
+
+---
+
+## Tecnologias
+
+| Pacote | Uso |
+|---|---|
+| `flutter` + `dart` | Framework principal |
+| `flame` + `flame_tiled` | Engine 2D e mapas de colisão |
+| `flame_audio` | Música e efeitos sonoros |
+| `firebase_core` + `cloud_firestore` | Persistência em nuvem |
+| `geolocator` | Leitura e validação de GPS |
+| `google_fonts` | Tipografia da UI |
+
+---
+
+## Estrutura
+
+```
+lib/
+├── game/           # Engine Flame (H15Game, SurvivalGame)
+├── models/         # Modelos de dados (Environment)
+├── screens/        # Telas (HomeScreen, MapSelectionScreen, H15LevelScreen)
+├── services/       # Serviços (AudioManager, FirebaseService, LocationService)
+├── main.dart
+└── firebase_options.dart
+
+assets/
+├── images/         # Sprites, NPCs, telas, fundo do mapa
+├── tiles/          # JSON de colisões (Tiled)
+└── audio/          # Trilha sonora
+```
