@@ -2,97 +2,57 @@ import 'dart:async' as async;
 import 'dart:convert';
 import 'dart:math' as math;
 
-import 'package:flame/collisions.dart';
 import 'package:flame/components.dart';
 import 'package:flame/experimental.dart' show Rectangle;
 import 'package:flame/game.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../models/game_state.dart';
 import '../services/firebase_service.dart';
+import 'base_hud_component.dart';
 import 'h15_game.dart' show InvisibleWall, PlayerComponent, SolidObstacle;
-
-abstract class BibliotecaZoneIds {
-  static const terminalPrefix = 'terminal_';
-  static const documentPrefix = 'documento_';
-  static const quadroAvisos = 'quadro_avisos';
-  static const portaSaida = 'porta_saida';
-}
-
-abstract class BibliotecaItemIds {
-  static const cartaoAcesso = 'cartao_acesso_funcionario';
-}
-
-class BibliotecaLoreEntry {
-  const BibliotecaLoreEntry({
-    required this.title,
-    required this.body,
-  });
-
-  final String title;
-  final String body;
-}
-
-const List<BibliotecaLoreEntry> kBibliotecaLoreEntries = [
-  BibliotecaLoreEntry(
-    title: 'RELATORIO DE INCIDENTE X-24',
-    body:
-        'A primeira falha registrada veio do setor de arquivos digitais. O terminal indica que o acesso aos registros biologicos foi forçado minutos antes do alarme geral.',
-  ),
-  BibliotecaLoreEntry(
-    title: 'MEMORANDO INTERNO',
-    body:
-        'O campus entrou em confinamento parcial as 07:00. Funcionarios de nivel 3 receberam cartoes temporarios para liberar rotas ate o CAA.',
-  ),
-  BibliotecaLoreEntry(
-    title: 'LOG DO ACERVO DIGITAL',
-    body:
-        'Fragmentos recuperados mencionam o Protocolo Delta e uma rota de evacuacao pelo corredor norte da Biblioteca. A porta rejeita usuarios sem credencial.',
-  ),
-  BibliotecaLoreEntry(
-    title: 'QUADRO DE AVISOS',
-    body:
-        'Um mapa rabiscado destaca a saida de emergencia e uma nota: "Cartao de funcionario necessario para seguir ao CAA".',
-  ),
-];
 
 class BibliotecaGame extends FlameGame with HasCollisionDetection {
   BibliotecaGame({required this.playerName});
 
   final String playerName;
 
-  static final Vector2 _fallbackMapSize = Vector2(870, 1024);
-  static final Vector2 _fallbackSpawn = Vector2(435, 930);
-  static final Vector2 _fallbackCardPosition = Vector2(580, 880);
-
-  // The H15 PlayerComponent defaults to 96×96, which is too large relative to
-  // the library's furniture. This constant is used for both spawn-clamping and
-  // the post-load size override so every reference stays in sync.
-  static final Vector2 _playerSize = Vector2(48, 48);
+  static final Vector2 _kMapFallback = Vector2(870, 1024);
+  static final Vector2 _kSpawnFallback = Vector2(435, 930);
+  static final Vector2 _kCardFallback = Vector2(435, 700);
+  static final Vector2 _kExitPosFallback = Vector2(300, 30);
+  static final Vector2 _kExitSizeFallback = Vector2(220, 70);
+  static final Vector2 _kPlayerSize = Vector2(48, 48);
 
   PlayerComponent? player;
   JoystickComponent? _joystick;
-  SpriteComponent? _background;
-
-  Vector2 _mapSize = _fallbackMapSize.clone();
+  Vector2 _mapSize = _kMapFallback.clone();
   final List<SolidObstacle> _walls = [];
-  final List<BibliotecaInteractable> _interactables = [];
-  final List<BibliotecaPickup> _pickups = [];
 
-  final ValueNotifier<String> missionText = ValueNotifier(
-    'Missao: investigue os terminais e encontre o Cartao de Acesso.',
+  AccessCardComponent? _card;
+  ExitDoorZone? _exitDoor;
+
+  // ── Centralized HUD (camera-viewport fixed) ────────────────────────────
+  // Initialized eagerly so biblioteca_level_screen.dart can read hud.*
+  // notifiers from build() before onLoad() completes. The component is
+  // registered with camera.viewport inside onLoad() as usual.
+  final BaseHudComponent hud = BaseHudComponent(
+    initialHealth: 100,
+    maxHealth: 100,
+    initialMission: 'Missão: Encontre o Cartão de Acesso.',
+    countTimer: true,
   );
-  final ValueNotifier<String?> hudMessage = ValueNotifier(null);
-  final ValueNotifier<bool> canInteract = ValueNotifier(false);
-  final ValueNotifier<String> interactLabel = ValueNotifier('INTERAGIR');
-  final ValueNotifier<bool> dialogOpen = ValueNotifier(false);
-  final ValueNotifier<bool> levelCompleted = ValueNotifier(false);
-  final ValueNotifier<BibliotecaLoreEntry?> activeLore = ValueNotifier(null);
-  final ValueNotifier<bool> hasAccessCardNotifier = ValueNotifier(false);
 
-  BibliotecaInteractable? _nearbyInteractable;
+  // ── Phase-specific state ───────────────────────────────────────────────
   bool hasAccessCard = false;
   bool _transitioning = false;
+  bool _showingExitOverlay = false;
+  double _exitDeniedCooldown = 0;
+  double _exitOverlayCooldown = 0;
+
+  final ValueNotifier<bool> levelCompleted = ValueNotifier(false);
+  final ValueNotifier<bool> hasAccessCardNotifier = ValueNotifier(false);
 
   @override
   Color backgroundColor() => Colors.black;
@@ -100,37 +60,160 @@ class BibliotecaGame extends FlameGame with HasCollisionDetection {
   @override
   Future<void> onLoad() async {
     await super.onLoad();
-
     camera.viewfinder.anchor = Anchor.center;
-    camera.viewfinder.position = _fallbackSpawn.clone();
 
+    // ── 1. Register the pre-built HUD component with the camera viewport ──
+    // hud is created eagerly at field-declaration time so the screen's
+    // build() can safely read hud.* before onLoad() completes.
+    // camera.viewport.add() is what makes it fixed in screen-space.
+    camera.viewport.add(hud);
+
+    // ── 2. World setup ────────────────────────────────────────────────────
     final rawMap = await _loadTiledMap();
     await _loadBackground();
     _addBorderWalls();
-    _loadInteractableObjects(rawMap);
-    _spawnAccessCard(rawMap);
+    _spawnCard(rawMap);
+    _spawnExitDoor(rawMap);
 
-    final playerImage = await images.load('player/player_sprite.jpg');
-    final playerComponent = PlayerComponent.fromSpriteSheet(playerImage)
-      ..position = _readSpawn(rawMap)
-      ..priority = 5
-      ..size = _playerSize; // scale down from H15's 96×96 to fit library proportions
-    player = playerComponent;
-    await world.add(playerComponent);
+    // ── 3. Player ─────────────────────────────────────────────────────────
+    final spawn = _readSpawn(rawMap);
+    final playerImg = await images.load('player/player_sprite.jpg');
+    final p = PlayerComponent.fromSpriteSheet(playerImg)
+      ..position = spawn
+      ..size = _kPlayerSize
+      ..priority = 5;
+    player = p;
+    await world.add(p);
 
+    // ── 4. Camera ─────────────────────────────────────────────────────────
+    camera.viewfinder.position = spawn;
     final minZoom = math.max(size.x / _mapSize.x, size.y / _mapSize.y);
     camera.viewfinder.zoom = math.max(minZoom, 1.5);
     camera.setBounds(Rectangle.fromLTWH(0, 0, _mapSize.x, _mapSize.y));
-    camera.follow(playerComponent, snap: true);
+    camera.follow(p, snap: true);
 
+    // ── 5. Input + weapon ─────────────────────────────────────────────────
     _setupJoystick();
     _restoreWeapon();
 
-    async.Timer(const Duration(milliseconds: 700), () {
-      if (!isMounted) return;
-      showHudMessage('Procure documentos, terminais e o cartao de funcionario.');
+    async.Timer(const Duration(milliseconds: 600), () {
+      if (isMounted) hud.showMessage('Encontre o Cartão de Acesso na Biblioteca.');
     });
   }
+
+  @override
+  void update(double dt) {
+    super.update(dt);
+    if (_transitioning) return;
+
+    final p = player;
+    final j = _joystick;
+    if (p != null && j != null && !_showingExitOverlay) {
+      p.move(j.relativeDelta, dt, _mapSize, _walls);
+    }
+
+    if (_exitDeniedCooldown > 0) _exitDeniedCooldown -= dt;
+    if (_exitOverlayCooldown > 0) _exitOverlayCooldown -= dt;
+
+    _checkCardCollection();
+    if (!_showingExitOverlay) _checkExitDoor();
+  }
+
+  // ── Gameplay Logic ────────────────────────────────────────────────────
+
+  void _checkCardCollection() {
+    final card = _card;
+    final p = player;
+    if (card == null || card.collected || p == null) return;
+    if ((p.position - card.position).length <= 56) _collectCard();
+  }
+
+  void _collectCard() {
+    _card!.collect();
+    hasAccessCard = true;
+    hasAccessCardNotifier.value = true;
+    hud.missionText.value = 'Missão: Vá até a Porta de Saída.';
+    hud.showMessage('Cartão de Acesso Coletado');
+    FirebaseService.instance
+        .addItem(playerName, 'cartao_acesso_funcionario')
+        .catchError((_) {});
+  }
+
+  void _checkExitDoor() {
+    if (_exitOverlayCooldown > 0) return;
+    final door = _exitDoor;
+    final p = player;
+    if (door == null || p == null) return;
+
+    final playerRect = Rect.fromCenter(
+      center: Offset(p.position.x, p.position.y),
+      width: p.size.x * 0.6,
+      height: p.size.y * 0.6,
+    );
+    if (!door.rect.inflate(20).overlaps(playerRect)) return;
+
+    if (!hasAccessCard) {
+      if (_exitDeniedCooldown <= 0) {
+        hud.showMessage('Trancado. Encontre o Cartão.');
+        _exitDeniedCooldown = 3.0;
+      }
+      return;
+    }
+
+    _showingExitOverlay = true;
+    hud.paused = true; // freeze timer while player decides
+    overlays.add('ExitDoor');
+  }
+
+  // Called by the "Entrar" button in ExitDoorOverlay.
+  void onExitConfirmed() {
+    overlays.remove('ExitDoor');
+    _transitioning = true;
+    hud.paused = false;
+    FirebaseService.instance.unlockNextPhase(playerName).then((_) {
+      levelCompleted.value = true;
+    }).catchError((_) {
+      levelCompleted.value = true;
+    });
+  }
+
+  // Called by the "Cancelar" button in ExitDoorOverlay.
+  void onExitCancelled() {
+    overlays.remove('ExitDoor');
+    _showingExitOverlay = false;
+    hud.paused = false;
+    _exitOverlayCooldown = 2.0;
+  }
+
+  // ── Weapon Loading ────────────────────────────────────────────────────
+  //
+  // Pattern for ALL phase game files:
+  // 1. Load weapon name from Firebase (source of truth).
+  // 2. Update GameState so subsequent phases skip the Firebase call.
+  // 3. Apply the sprite sheet to the player.
+  // 4. On Firebase failure, fall back to whatever GameState already holds
+  //    (populated by a previous phase's successful load).
+
+  void _restoreWeapon() {
+    FirebaseService.instance.loadWeapon().then((weapon) async {
+      final selected = (weapon == null || weapon.isEmpty) ? 'Espada' : weapon;
+      GameState.instance.setWeapon(selected); // persist across phases in-memory
+      try {
+        player?.useWeaponSpriteSheet(
+          await images.load(GameState.instance.weaponAssetPath),
+        );
+      } catch (_) {}
+    }).catchError((_) async {
+      // Firebase unavailable — use whatever weapon the previous phase loaded.
+      try {
+        player?.useWeaponSpriteSheet(
+          await images.load(GameState.instance.weaponAssetPath),
+        );
+      } catch (_) {}
+    });
+  }
+
+  // ── Map Loading ───────────────────────────────────────────────────────
 
   Future<Map<String, dynamic>> _loadTiledMap() async {
     try {
@@ -139,186 +222,96 @@ class BibliotecaGame extends FlameGame with HasCollisionDetection {
       _mapSize = _readMapSize(map);
       return map;
     } catch (e) {
-      debugPrint('Biblioteca map load failed: $e');
-      _mapSize = _fallbackMapSize.clone();
+      debugPrint('BibliotecaGame: map load failed: $e');
+      _mapSize = _kMapFallback.clone();
       return const {};
     }
   }
 
   Vector2 _readMapSize(Map<String, dynamic> map) {
-    final layers = _layers(map);
-    for (final layer in layers) {
-      final w = (layer['imagewidth'] as num?)?.toDouble();
-      final h = (layer['imageheight'] as num?)?.toDouble();
-      if (w != null && h != null) return Vector2(w, h);
-    }
-    final width = (map['width'] as num? ?? 0).toDouble();
-    final height = (map['height'] as num? ?? 0).toDouble();
-    final tileW = (map['tilewidth'] as num? ?? 16).toDouble();
-    final tileH = (map['tileheight'] as num? ?? 16).toDouble();
-    if (width > 0 && height > 0) return Vector2(width * tileW, height * tileH);
-    return _fallbackMapSize.clone();
+    final w = (map['width'] as num? ?? 0).toDouble();
+    final h = (map['height'] as num? ?? 0).toDouble();
+    final tw = (map['tilewidth'] as num? ?? 16).toDouble();
+    final th = (map['tileheight'] as num? ?? 16).toDouble();
+    if (w > 0 && h > 0) return Vector2(w * tw, h * th);
+    return _kMapFallback.clone();
   }
 
   Future<void> _loadBackground() async {
     try {
-      _background = SpriteComponent(
+      world.add(SpriteComponent(
         sprite: await loadSprite('screens/biblioteca.png'),
         size: _mapSize,
         position: Vector2.zero(),
         priority: -10,
-      );
-      world.add(_background!);
-    } catch (e) {
-      debugPrint('Biblioteca background failed: $e');
-      world.add(BibliotecaFallbackMap(size: _mapSize)..priority = -10);
+      ));
+    } catch (_) {
+      world.add(BibliotecaFallbackMap(mapSize: _mapSize)..priority = -10);
     }
   }
 
   void _addBorderWalls() {
     const t = 8.0;
-    final specs = [
+    for (final s in [
       (Vector2.zero(), Vector2(_mapSize.x, t)),
       (Vector2(0, _mapSize.y - t), Vector2(_mapSize.x, t)),
       (Vector2.zero(), Vector2(t, _mapSize.y)),
       (Vector2(_mapSize.x - t, 0), Vector2(t, _mapSize.y)),
-    ];
-    for (final spec in specs) {
-      final wall = InvisibleWall(
-        position: spec.$1,
-        size: spec.$2,
-        showDebug: false,
-      )..priority = 1;
-      _walls.add(wall);
-      world.add(wall);
+    ]) {
+      final w = InvisibleWall(position: s.$1, size: s.$2, showDebug: false)
+        ..priority = 1;
+      _walls.add(w);
+      world.add(w);
     }
   }
 
-  void _loadInteractableObjects(Map<String, dynamic> map) {
-    final layer = _objectLayer(map, 'Interagiveis');
-    final objects = _objects(layer);
-    if (objects.isEmpty) {
-      _addFallbackInteractables();
-      return;
-    }
-
-    var loreIndex = 0;
-    for (final obj in objects) {
-      final id = _stringProperty(obj, 'zoneId') ?? obj['name'] as String? ?? '';
-      if (id.isEmpty) continue;
-
-      final kind = _kindForZone(id);
-      if (kind == BibliotecaInteractableKind.unknown) continue;
-
-      final entry = kind == BibliotecaInteractableKind.exit
-          ? null
-          : kBibliotecaLoreEntries[
-              loreIndex.clamp(0, kBibliotecaLoreEntries.length - 1)];
-      if (entry != null) loreIndex++;
-
-      _addInteractable(
-        BibliotecaInteractable(
-          zoneId: id,
-          kind: kind,
-          lore: entry,
-          position: Vector2(
-            (obj['x'] as num? ?? 0).toDouble(),
-            (obj['y'] as num? ?? 0).toDouble(),
-          ),
-          size: Vector2(
-            math.max((obj['width'] as num? ?? 0).toDouble(), 24),
-            math.max((obj['height'] as num? ?? 0).toDouble(), 24),
-          ),
-        ),
-      );
-    }
-  }
-
-  void _addFallbackInteractables() {
-    final specs = [
-      ('terminal_1', BibliotecaInteractableKind.lore, Vector2(50, 548), Vector2(70, 50)),
-      ('terminal_2', BibliotecaInteractableKind.lore, Vector2(130, 548), Vector2(70, 50)),
-      ('terminal_3', BibliotecaInteractableKind.lore, Vector2(200, 548), Vector2(70, 50)),
-      ('quadro_avisos', BibliotecaInteractableKind.lore, Vector2(295, 45), Vector2(150, 55)),
-      ('porta_saida', BibliotecaInteractableKind.exit, Vector2(0, 0), Vector2(170, 150)),
-    ];
-    for (var i = 0; i < specs.length; i++) {
-      final spec = specs[i];
-      _addInteractable(
-        BibliotecaInteractable(
-          zoneId: spec.$1,
-          kind: spec.$2,
-          lore: spec.$2 == BibliotecaInteractableKind.exit
-              ? null
-              : kBibliotecaLoreEntries[i.clamp(0, kBibliotecaLoreEntries.length - 1)],
-          position: spec.$3,
-          size: spec.$4,
-        ),
-      );
-    }
-  }
-
-  void _addInteractable(BibliotecaInteractable component) {
-    _interactables.add(component);
-    world.add(component);
-  }
-
-  BibliotecaInteractableKind _kindForZone(String id) {
-    final lower = id.toLowerCase();
-    if (lower == BibliotecaZoneIds.portaSaida ||
-        lower.contains('porta') ||
-        lower.contains('exit') ||
-        lower.contains('saida')) {
-      return BibliotecaInteractableKind.exit;
-    }
-    if (lower.startsWith(BibliotecaZoneIds.terminalPrefix) ||
-        lower.startsWith(BibliotecaZoneIds.documentPrefix) ||
-        lower.contains('terminal') ||
-        lower.contains('document') ||
-        lower.contains('relatorio') ||
-        lower.contains('quadro')) {
-      return BibliotecaInteractableKind.lore;
-    }
-    return BibliotecaInteractableKind.unknown;
-  }
-
-  void _spawnAccessCard(Map<String, dynamic> map) {
-    final object = _findObjectByName(map, (name) {
-      final lower = name.toLowerCase();
-      return lower.contains('cartao') ||
-          lower.contains('card') ||
-          lower.contains('acesso');
+  void _spawnCard(Map<String, dynamic> map) {
+    final obj = _findObject(map, (n) {
+      final l = n.toLowerCase();
+      return l.contains('cartao') || l.contains('card') || l.contains('acesso');
     });
-    final pos = object == null
-        ? _fallbackCardPosition
+    final pos = obj == null
+        ? _kCardFallback.clone()
         : Vector2(
-            (object['x'] as num? ?? 0).toDouble() +
-                (object['width'] as num? ?? 0).toDouble() / 2,
-            (object['y'] as num? ?? 0).toDouble() +
-                (object['height'] as num? ?? 0).toDouble() / 2,
+            (obj['x'] as num).toDouble() +
+                (obj['width'] as num? ?? 0).toDouble() / 2,
+            (obj['y'] as num).toDouble() +
+                (obj['height'] as num? ?? 0).toDouble() / 2,
           );
-    final card = BibliotecaPickup(
-      itemId: BibliotecaItemIds.cartaoAcesso,
-      label: 'PEGAR CARTAO',
-      position: _clampToMap(pos, Vector2(42, 28)),
-      size: Vector2(42, 28),
-    );
-    _pickups.add(card);
-    world.add(card);
+    _card = AccessCardComponent(position: _clamp(pos, Vector2(42, 28)));
+    world.add(_card!);
+  }
+
+  void _spawnExitDoor(Map<String, dynamic> map) {
+    final obj = _findObject(map, (n) {
+      final l = n.toLowerCase();
+      return l.contains('saida') || l.contains('exit') || l.contains('porta');
+    });
+    final pos = obj == null
+        ? _kExitPosFallback.clone()
+        : Vector2(
+            (obj['x'] as num).toDouble(),
+            (obj['y'] as num).toDouble(),
+          );
+    final sz = obj == null
+        ? _kExitSizeFallback.clone()
+        : Vector2(
+            math.max((obj['width'] as num? ?? 0).toDouble(), 60),
+            math.max((obj['height'] as num? ?? 0).toDouble(), 60),
+          );
+    _exitDoor = ExitDoorZone(position: pos, size: sz);
+    world.add(_exitDoor!);
   }
 
   Vector2 _readSpawn(Map<String, dynamic> map) {
-    final object = _findObjectByName(map, (name) {
-      final lower = name.toLowerCase();
-      return lower.contains('spawn') || lower.contains('player');
+    final obj = _findObject(map, (n) {
+      final l = n.toLowerCase();
+      return l.contains('spawn') || l.contains('player');
     });
-    if (object == null) return _clampToMap(_fallbackSpawn, _playerSize);
-    return _clampToMap(
-      Vector2(
-        (object['x'] as num? ?? 0).toDouble(),
-        (object['y'] as num? ?? 0).toDouble(),
-      ),
-      _playerSize,
+    if (obj == null) return _clamp(_kSpawnFallback, _kPlayerSize);
+    return _clamp(
+      Vector2((obj['x'] as num).toDouble(), (obj['y'] as num).toDouble()),
+      _kPlayerSize,
     );
   }
 
@@ -338,212 +331,34 @@ class BibliotecaGame extends FlameGame with HasCollisionDetection {
     camera.viewport.add(_joystick!);
   }
 
-  void _restoreWeapon() {
-    FirebaseService.instance.loadWeapon().then((weapon) async {
-      final selected = (weapon == null || weapon.isEmpty) ? 'Espada' : weapon;
-      final asset = selected == 'Duas Adagas'
-          ? 'player/player_espada2mao.png'
-          : 'player/player_espada1mao.png';
-      try {
-        final img = await images.load(asset);
-        player?.useWeaponSpriteSheet(img);
-      } catch (e) {
-        debugPrint('Biblioteca weapon sprite failed: $e');
-      }
-    }).catchError((_) {});
-  }
+  // ── Helpers ───────────────────────────────────────────────────────────
 
-  @override
-  void update(double dt) {
-    super.update(dt);
-    if (dialogOpen.value || _transitioning) return;
-
-    final p = player;
-    final j = _joystick;
-    if (p == null || j == null) return;
-
-    p.move(j.relativeDelta, dt, _mapSize, _walls);
-    _updatePickupCollection();
-    _updateProximity();
-  }
-
-  void _updatePickupCollection() {
-    final p = player;
-    if (p == null) return;
-    for (final pickup in List<BibliotecaPickup>.of(_pickups)) {
-      if (pickup.collected) continue;
-      if ((p.position - pickup.position).length <= 56) {
-        _collectPickup(pickup);
-      }
-    }
-  }
-
-  void _collectPickup(BibliotecaPickup pickup) {
-    pickup.collect();
-    if (pickup.itemId == BibliotecaItemIds.cartaoAcesso) {
-      hasAccessCard = true;
-      hasAccessCardNotifier.value = true;
-      missionText.value = 'Missao: use o Cartao de Acesso na saida para o CAA.';
-      showHudMessage('Cartao de Acesso de Funcionario coletado.');
-      FirebaseService.instance
-          .addItem(playerName, BibliotecaItemIds.cartaoAcesso)
-          .catchError((e) => debugPrint('addItem cartao_acesso failed: $e'));
-    }
-  }
-
-  void _updateProximity() {
-    final p = player;
-    if (p == null) return;
-
-    BibliotecaInteractable? nearby;
-    var bestDistance = double.infinity;
-    for (final item in _interactables) {
-      final distance = (p.position - item.center).length;
-      final insideExit =
-          item.kind == BibliotecaInteractableKind.exit &&
-              item.rect.inflate(16).contains(Offset(p.position.x, p.position.y));
-      if ((distance <= item.interactionRadius || insideExit) &&
-          distance < bestDistance) {
-        nearby = item;
-        bestDistance = distance;
-      }
-    }
-
-    _nearbyInteractable = nearby;
-    canInteract.value = nearby != null;
-    interactLabel.value = switch (nearby?.kind) {
-      BibliotecaInteractableKind.lore => 'INVESTIGAR',
-      // Show the card requirement in the button label so the player knows
-      // exactly what's blocking them before they even press it.
-      BibliotecaInteractableKind.exit =>
-        hasAccessCard ? 'ENTRAR' : 'USAR CARTAO',
-      _ => 'INTERAGIR',
-    };
-  }
-
-  Future<void> interact() async {
-    final target = _nearbyInteractable;
-    if (target == null || dialogOpen.value || _transitioning) return;
-
-    switch (target.kind) {
-      case BibliotecaInteractableKind.lore:
-        final lore = target.lore ?? kBibliotecaLoreEntries.first;
-        activeLore.value = lore;
-        dialogOpen.value = true;
-        overlays.add('Lore');
-      case BibliotecaInteractableKind.exit:
-        await _tryExit();
-      case BibliotecaInteractableKind.unknown:
-        break;
-    }
-  }
-
-  void closeLore() {
-    overlays.remove('Lore');
-    activeLore.value = null;
-    dialogOpen.value = false;
-  }
-
-  Future<void> _tryExit() async {
-    if (!hasAccessCard) {
-      showHudMessage('Acesso Negado: Cartão Necessário');
-      return;
-    }
-    _transitioning = true;
-    canInteract.value = false;
-    showHudMessage('Acesso liberado. Rota para o CAA desbloqueada.');
-    await FirebaseService.instance.unlockNextPhase(playerName);
-    await async.Future<void>.delayed(const Duration(milliseconds: 850));
-    levelCompleted.value = true;
-  }
-
-  void showHudMessage(String message) {
-    hudMessage.value = message;
-    async.Timer(const Duration(seconds: 3), () {
-      if (hudMessage.value == message) hudMessage.value = null;
-    });
-  }
-
-  Vector2 _clampToMap(Vector2 center, Vector2 componentSize) => Vector2(
-        center.x
-            .clamp(componentSize.x / 2, _mapSize.x - componentSize.x / 2)
-            .toDouble(),
-        center.y
-            .clamp(componentSize.y / 2, _mapSize.y - componentSize.y / 2)
-            .toDouble(),
+  Vector2 _clamp(Vector2 center, Vector2 sz) => Vector2(
+        center.x.clamp(sz.x / 2, _mapSize.x - sz.x / 2).toDouble(),
+        center.y.clamp(sz.y / 2, _mapSize.y - sz.y / 2).toDouble(),
       );
 
-  List<Map<String, dynamic>> _layers(Map<String, dynamic> map) =>
-      (map['layers'] as List<dynamic>? ?? const [])
-          .whereType<Map<String, dynamic>>()
-          .toList();
-
-  Map<String, dynamic>? _objectLayer(Map<String, dynamic> map, String name) {
-    for (final layer in _layers(map)) {
-      if ((layer['name'] as String? ?? '') == name) return layer;
-    }
-    return null;
-  }
-
-  List<Map<String, dynamic>> _objects(Map<String, dynamic>? layer) =>
-      (layer?['objects'] as List<dynamic>? ?? const [])
-          .whereType<Map<String, dynamic>>()
-          .toList();
-
-  String? _stringProperty(Map<String, dynamic> obj, String name) {
-    final props = obj['properties'];
-    if (props is! List) return null;
-    for (final prop in props.whereType<Map<String, dynamic>>()) {
-      if (prop['name'] == name) return prop['value']?.toString();
-    }
-    return null;
-  }
-
-  Map<String, dynamic>? _findObjectByName(
+  Map<String, dynamic>? _findObject(
     Map<String, dynamic> map,
-    bool Function(String name) test,
+    bool Function(String) test,
   ) {
-    for (final layer in _layers(map)) {
-      for (final obj in _objects(layer)) {
-        final name = obj['name']?.toString() ?? '';
-        if (test(name)) return obj;
+    for (final layer
+        in (map['layers'] as List? ?? []).whereType<Map<String, dynamic>>()) {
+      for (final obj in (layer['objects'] as List? ?? [])
+          .whereType<Map<String, dynamic>>()) {
+        if (test(obj['name']?.toString() ?? '')) return obj;
       }
     }
     return null;
   }
 }
 
-enum BibliotecaInteractableKind { lore, exit, unknown }
+// ── AccessCardComponent ───────────────────────────────────────────────────
 
-class BibliotecaInteractable extends PositionComponent {
-  BibliotecaInteractable({
-    required this.zoneId,
-    required this.kind,
-    required this.lore,
-    required super.position,
-    required super.size,
-  }) : super(priority: 1);
+class AccessCardComponent extends PositionComponent {
+  AccessCardComponent({required super.position})
+      : super(size: Vector2(42, 28), anchor: Anchor.center, priority: 4);
 
-  final String zoneId;
-  final BibliotecaInteractableKind kind;
-  final BibliotecaLoreEntry? lore;
-
-  Rect get rect => Rect.fromLTWH(position.x, position.y, size.x, size.y);
-  @override
-  Vector2 get center => Vector2(position.x + size.x / 2, position.y + size.y / 2);
-  double get interactionRadius => kind == BibliotecaInteractableKind.exit ? 96 : 72;
-}
-
-class BibliotecaPickup extends PositionComponent {
-  BibliotecaPickup({
-    required this.itemId,
-    required this.label,
-    required super.position,
-    required super.size,
-  }) : super(anchor: Anchor.center, priority: 4);
-
-  final String itemId;
-  final String label;
   bool collected = false;
   double _pulse = 0;
 
@@ -553,26 +368,13 @@ class BibliotecaPickup extends PositionComponent {
   }
 
   @override
-  Future<void> onLoad() async {
-    await super.onLoad();
-    add(RectangleHitbox(collisionType: CollisionType.passive));
-  }
-
-  @override
-  void update(double dt) {
-    super.update(dt);
-    _pulse += dt;
-  }
+  void update(double dt) => _pulse += dt;
 
   @override
   void render(Canvas canvas) {
     if (collected) return;
     final glow = 0.55 + math.sin(_pulse * 5) * 0.18;
-    final rect = Rect.fromCenter(
-      center: Offset(size.x / 2, size.y / 2),
-      width: size.x,
-      height: size.y,
-    );
+    final rect = Rect.fromLTWH(0, 0, size.x, size.y);
 
     canvas.drawOval(
       Rect.fromCenter(
@@ -609,21 +411,58 @@ class BibliotecaPickup extends PositionComponent {
   }
 }
 
+// ── ExitDoorZone ──────────────────────────────────────────────────────────
+
+class ExitDoorZone extends PositionComponent {
+  ExitDoorZone({required super.position, required super.size})
+      : super(priority: 2);
+
+  Rect get rect => Rect.fromLTWH(position.x, position.y, size.x, size.y);
+
+  @override
+  void render(Canvas canvas) {
+    canvas.drawRect(
+      size.toRect(),
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2
+        ..color = const Color(0xFF38BDF8).withValues(alpha: 0.45),
+    );
+    final tp = TextPainter(
+      text: const TextSpan(
+        text: 'SAÍDA →',
+        style: TextStyle(
+          color: Color(0xFF38BDF8),
+          fontSize: 10,
+          fontWeight: FontWeight.bold,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    tp.paint(
+      canvas,
+      Offset((size.x - tp.width) / 2, (size.y - tp.height) / 2),
+    );
+  }
+}
+
+// ── BibliotecaFallbackMap ─────────────────────────────────────────────────
+
 class BibliotecaFallbackMap extends PositionComponent {
-  BibliotecaFallbackMap({required Vector2 size})
-      : super(size: size, position: Vector2.zero());
+  BibliotecaFallbackMap({required Vector2 mapSize})
+      : super(size: mapSize, position: Vector2.zero());
 
   @override
   void render(Canvas canvas) {
     canvas.drawRect(size.toRect(), Paint()..color = const Color(0xFF2F2A24));
-    final line = Paint()
-      ..color = const Color(0x334A5568)
+    final grid = Paint()
+      ..color = const Color(0x224A5568)
       ..strokeWidth = 1;
     for (var x = 0.0; x < size.x; x += 48) {
-      canvas.drawLine(Offset(x, 0), Offset(x, size.y), line);
+      canvas.drawLine(Offset(x, 0), Offset(x, size.y), grid);
     }
     for (var y = 0.0; y < size.y; y += 48) {
-      canvas.drawLine(Offset(0, y), Offset(size.x, y), line);
+      canvas.drawLine(Offset(0, y), Offset(size.x, y), grid);
     }
   }
 }

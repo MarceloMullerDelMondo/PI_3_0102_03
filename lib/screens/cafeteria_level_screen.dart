@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import '../game/cafeteria_game.dart';
+import 'base_game_hud.dart';
 
 class CafeteriaLevelScreen extends StatefulWidget {
   const CafeteriaLevelScreen({
@@ -87,10 +88,88 @@ class _CafeteriaLevelScreenState extends State<CafeteriaLevelScreen>
               valueListenable: _game.gameOver,
               builder: (_, gameOver, __) {
                 if (dialogOpen || gameOver) return const SizedBox.shrink();
-                return CafeteriaHud(
-                  game: _game,
+                return BaseGameHud(
+                  currentHealth: _game.currentHealth,
+                  maxHealth: 100,
+                  missionText: _game.missionText,
+                  hudMessage: _game.hudMessage,
                   onBack: () => Navigator.of(context).pop(false),
-                  devMode: widget.devMode,
+                  extraTopLeft: _CafNoisePanel(game: _game),
+                  extraStack: [
+                    // Interact button
+                    Positioned(
+                      right: 145,
+                      bottom: 24,
+                      child: ValueListenableBuilder<bool>(
+                        valueListenable: _game.canInteract,
+                        builder: (_, can, __) => AnimatedOpacity(
+                          opacity: can ? 1 : 0,
+                          duration: const Duration(milliseconds: 140),
+                          child: IgnorePointer(
+                            ignoring: !can,
+                            child: ValueListenableBuilder<String>(
+                              valueListenable: _game.interactLabel,
+                              builder: (_, label, __) => _PixelButton(
+                                label: label,
+                                onTap: _game.interact,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                    // Attack + EST column
+                    Positioned(
+                      right: 20,
+                      bottom: 20,
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          ValueListenableBuilder<bool>(
+                            valueListenable: _game.attackEnabled,
+                            builder: (_, enabled, __) => _CafAttackButton(
+                              enabled: enabled,
+                              onTap: _game.attack,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          _PixelButton(
+                            label: 'EST',
+                            onTap: _game.useStimulant,
+                          ),
+                        ],
+                      ),
+                    ),
+                    // Dev skip-mission button
+                    if (widget.devMode)
+                      Positioned(
+                        top: 10,
+                        left: 0,
+                        right: 0,
+                        child: Center(
+                          child: GestureDetector(
+                            onTap: _game.devSkipMission,
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 10,
+                                vertical: 6,
+                              ),
+                              decoration: BoxDecoration(
+                                color: const Color(0xDD001400),
+                                border: Border.all(
+                                  color: const Color(0xFF00FF00),
+                                  width: 1.5,
+                                ),
+                              ),
+                              child: Text(
+                                '[DEV] PULAR MISSÃO',
+                                style: _font(7, const Color(0xFF00FF00)),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
                 );
               },
             ),
@@ -101,164 +180,40 @@ class _CafeteriaLevelScreenState extends State<CafeteriaLevelScreen>
   }
 }
 
-class CafeteriaHud extends StatelessWidget {
-  const CafeteriaHud({
-    super.key,
-    required this.game,
-    required this.onBack,
-    this.devMode = false,
-  });
+/// Injected into [BaseGameHud.extraTopLeft] for Phase 2.
+/// Shows the noise meter and item counters below the health bar.
+class _CafNoisePanel extends StatelessWidget {
+  const _CafNoisePanel({required this.game});
 
   final CafeteriaGame game;
-  final VoidCallback onBack;
-  final bool devMode;
 
   @override
   Widget build(BuildContext context) {
-    return SafeArea(
-      child: Stack(
-        fit: StackFit.expand,
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: const Color(0xE607070B),
+        border: Border.all(color: const Color(0xFFF59E0B), width: 1.5),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
         children: [
-          Positioned(
-            left: 12,
-            top: 10,
-            child: _HudPanel(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  GestureDetector(
-                    onTap: onBack,
-                    child: Text('< MAPA', style: _font(8, const Color(0xFFF5C842))),
-                  ),
-                  const SizedBox(height: 12),
-                  ValueListenableBuilder<double>(
-                    valueListenable: game.currentHealth,
-                    builder: (_, hp, __) => ValueListenableBuilder<double>(
-                      valueListenable: game.maxHealth,
-                      builder: (_, maxHp, __) => Text(
-                        'VIDA ${hp.round()}/${maxHp.round()}',
-                        style: _font(9, Colors.white),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  ValueListenableBuilder<int>(
-                    valueListenable: game.brokenTables,
-                    builder: (_, count, __) => Text(
-                      'BARULHO $count/${game.maxSafeBrokenTables}',
-                      style: _font(8, const Color(0xFFFFD166)),
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  ValueListenableBuilder<int>(
-                    valueListenable: game.emergencyMedkit,
-                    builder: (_, med, __) => ValueListenableBuilder<int>(
-                      valueListenable: game.stimulant,
-                      builder: (_, stim, __) => Text(
-                        'MED $med  EST $stim',
-                        style: _font(8, const Color(0xFF86EFAC)),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
+          ValueListenableBuilder<int>(
+            valueListenable: game.brokenTables,
+            builder: (_, count, __) => Text(
+              'BARULHO $count/${game.maxSafeBrokenTables}',
+              style: _font(7, const Color(0xFFFFD166)),
             ),
           ),
-          Positioned(
-            top: 10,
-            right: 12,
-            child: _HudPanel(
-              child: SizedBox(
-                width: 330,
-                child: ValueListenableBuilder<String>(
-                  valueListenable: game.missionText,
-                  builder: (_, text, __) => Text(
-                    text,
-                    textAlign: TextAlign.right,
-                    style: _font(8, const Color(0xFFFDE68A), height: 1.7),
-                  ),
-                ),
-              ),
-            ),
-          ),
-          Positioned(
-            right: 145,
-            bottom: 24,
-            child: ValueListenableBuilder<bool>(
-              valueListenable: game.canInteract,
-              builder: (_, can, __) => AnimatedOpacity(
-                opacity: can ? 1 : 0,
-                duration: const Duration(milliseconds: 140),
-                child: IgnorePointer(
-                  ignoring: !can,
-                  child: ValueListenableBuilder<String>(
-                    valueListenable: game.interactLabel,
-                    builder: (_, label, __) => _PixelButton(
-                      label: label,
-                      onTap: game.interact,
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ),
-          Positioned(
-            right: 20,
-            bottom: 20,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                ValueListenableBuilder<bool>(
-                  valueListenable: game.attackEnabled,
-                  builder: (_, enabled, __) =>
-                      _CafAttackButton(enabled: enabled, onTap: game.attack),
-                ),
-                const SizedBox(height: 8),
-                _PixelButton(label: 'EST', onTap: () => game.useStimulant()),
-              ],
-            ),
-          ),
-          if (devMode)
-            Positioned(
-              top: 10,
-              left: 0,
-              right: 0,
-              child: Center(
-                child: GestureDetector(
-                  onTap: game.devSkipMission,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                    decoration: BoxDecoration(
-                      color: const Color(0xDD001400),
-                      border: Border.all(color: const Color(0xFF00FF00), width: 1.5),
-                    ),
-                    child: Text('[DEV] PULAR MISSÃO',
-                        style: _font(7, const Color(0xFF00FF00))),
-                  ),
-                ),
-              ),
-            ),
-          Positioned(
-            top: 78,
-            left: 0,
-            right: 0,
-            child: ValueListenableBuilder<String?>(
-              valueListenable: game.hudMessage,
-              builder: (_, message, __) => AnimatedOpacity(
-                opacity: message == null ? 0 : 1,
-                duration: const Duration(milliseconds: 160),
-                child: IgnorePointer(
-                  child: Center(
-                    child: _HudPanel(
-                      child: Text(
-                        message ?? '',
-                        textAlign: TextAlign.center,
-                        style: _font(8, const Color(0xFFF5C842), height: 1.6),
-                      ),
-                    ),
-                  ),
-                ),
+          const SizedBox(height: 4),
+          ValueListenableBuilder<int>(
+            valueListenable: game.emergencyMedkit,
+            builder: (_, med, __) => ValueListenableBuilder<int>(
+              valueListenable: game.stimulant,
+              builder: (_, stim, __) => Text(
+                'MED $med  EST $stim',
+                style: _font(7, const Color(0xFF86EFAC)),
               ),
             ),
           ),
@@ -1064,22 +1019,6 @@ class _Choice extends StatelessWidget {
   }
 }
 
-class _HudPanel extends StatelessWidget {
-  const _HudPanel({required this.child});
-  final Widget child;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      decoration: BoxDecoration(
-        color: Colors.black.withValues(alpha: .72),
-        border: Border.all(color: const Color(0xFFB87A18), width: 1.5),
-      ),
-      child: child,
-    );
-  }
-}
 
 class _PixelButton extends StatelessWidget {
   const _PixelButton({required this.label, required this.onTap});

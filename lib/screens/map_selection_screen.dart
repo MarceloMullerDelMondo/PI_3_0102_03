@@ -50,7 +50,11 @@ class _MapArea {
 
 // relX/relY = centre of the marker as a fraction of live screen size.
 // Calibrated from the user's screenshot (browser 500×875 game area).
-// NOTE: Fase 3 (Biblioteca) marker position and GPS coords need on-site calibration.
+//
+// HOW TO CALIBRATE a marker:
+//   relX  → 0.0 = left edge, 1.0 = right edge  (move LEFT = decrease, RIGHT = increase)
+//   relY  → 0.0 = top  edge, 1.0 = bottom edge  (move UP  = decrease, DOWN  = increase)
+//   relW/relH → tap-target size as fraction of screen (usually 0.18–0.22 is enough)
 const List<_MapArea> _areas = [
   _MapArea(
     fase: 1,
@@ -75,8 +79,15 @@ const List<_MapArea> _areas = [
   _MapArea(
     fase: 3,
     nome: 'Biblioteca',
-    relX: 0.45,
-    relY: 0.28,
+    // ── CALIBRATION KNOBS ───────────────────────────────────────────────────
+    // relX: horizontal centre  →  decrease to move LEFT,  increase to move RIGHT
+    // relY: vertical centre    →  decrease to move UP,    increase to move DOWN
+    //
+    // Starting point: entrance/stairs area (~centre-left, upper-middle of map).
+    // Fine-tune in 0.02 steps until the marker sits on the building door.
+    relX: 0.25, // ← HORIZONTAL  (esquerda — alinhado com a porta da Biblioteca Central)
+    relY: 0.43, // ← VERTICAL    (centro-alto — sobre a entrada/escada da Biblioteca)
+    // ────────────────────────────────────────────────────────────────────────
     relW: 0.22,
     relH: 0.16,
     lat: -22.833823430629206,
@@ -243,6 +254,15 @@ class _MapSelectionScreenState extends State<MapSelectionScreen>
   }
 
 
+  // ── Geolocation gate ──────────────────────────────────────────────────────
+  //
+  // Called every time a level button is tapped. Sequence:
+  //   1. LocationService checks/requests LocationPermission.whileInUse and
+  //      calls Geolocator.getCurrentPosition (high accuracy).
+  //   2. Geolocator.distanceBetween computes the distance to the target.
+  //   3. distance <= 50 m (or devMode/desktop bypass) → enter level.
+  //      distance >  50 m → show exact distance and block transition.
+
   Future<bool> _canEnterArea(_MapArea area) async {
     setState(() {
       _checkingGps = true;
@@ -259,8 +279,24 @@ class _MapSelectionScreenState extends State<MapSelectionScreen>
           )
           .timeout(const Duration(seconds: 12));
 
-      final msg = result.toastMessage;
-      if (msg != null) _pixelToast(msg, isError: result.isError);
+      switch (result) {
+        // Player is too far — show exact distance and area name.
+        case CheckTooFar(:final distanceMeters):
+          final int dist = distanceMeters.round();
+          final String distFmt =
+              dist >= 1000 ? '${(dist / 1000).toStringAsFixed(1)} km' : '$dist metros';
+          _pixelToast(
+            'Acesso Negado: Você está a $distFmt de ${area.nome}. '
+            'Aproxime-se para entrar!',
+            isError: true,
+          );
+
+        // All other cases (within radius, bypassed, error) use the default message.
+        case _:
+          final msg = result.toastMessage;
+          if (msg != null) _pixelToast(msg, isError: result.isError);
+      }
+
       return result.allowed;
     } on TimeoutException {
       _pixelToast('[GPS LENTO] Tente novamente em alguns segundos.', isError: true);

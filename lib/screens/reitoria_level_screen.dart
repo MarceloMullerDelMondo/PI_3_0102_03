@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import '../game/reitoria_game.dart';
+import 'base_game_hud.dart';
 
 class ReitoriaLevelScreen extends StatefulWidget {
   const ReitoriaLevelScreen({
@@ -85,18 +86,83 @@ class _ReitoriaLevelScreenState extends State<ReitoriaLevelScreen>
           ),
           ValueListenableBuilder<bool>(
             valueListenable: _game.dialogOpen,
-            builder: (_, dialogOpen, __) => ValueListenableBuilder<bool>(
-              valueListenable: _game.gameOver,
-              builder: (_, gameOver, __) {
-                if (dialogOpen) return const SizedBox.shrink();
-                return ReitoriaHud(
-                  game: _game,
-                  onBack: () => Navigator.of(context).pop(false),
-                  showGameOver: gameOver,
-                  devMode: widget.devMode,
-                );
-              },
-            ),
+            builder: (_, dialogOpen, __) {
+              if (dialogOpen) return const SizedBox.shrink();
+              return BaseGameHud(
+                currentHealth: _game.currentHealth,
+                maxHealth: 100,
+                missionText: _game.missionText,
+                hudMessage: _game.hudMessage,
+                onBack: () => Navigator.of(context).pop(false),
+                // Phase-specific: nightfall status badge below health bar.
+                extraTopLeft: _NightfallBadge(game: _game),
+                extraStack: [
+                  // Upload progress OR rescue countdown (centre of top bar).
+                  Positioned(
+                    left: 140,
+                    top: 10,
+                    right: 460,
+                    child: ValueListenableBuilder<ReitoriaRoute>(
+                      valueListenable: _game.route,
+                      builder: (_, route, __) => route == ReitoriaRoute.cure
+                          ? _UploadStatus(game: _game)
+                          : _CountdownStatus(game: _game),
+                    ),
+                  ),
+                  // Attack button (far right)
+                  Positioned(
+                    right: 24,
+                    bottom: 20,
+                    child: ValueListenableBuilder<bool>(
+                      valueListenable: _game.attackEnabled,
+                      builder: (_, enabled, __) =>
+                          _AttackButton(enabled: enabled, onTap: _game.attack),
+                    ),
+                  ),
+                  // Game-over overlay
+                  Positioned.fill(
+                    child: ValueListenableBuilder<bool>(
+                      valueListenable: _game.gameOver,
+                      builder: (_, gameOver, __) {
+                        if (!gameOver) {
+                          return const IgnorePointer(child: SizedBox.expand());
+                        }
+                        return ColoredBox(
+                          color: Colors.black.withValues(alpha: .84),
+                          child: Center(
+                            child: _HudPanel(
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Text(
+                                    'FIM DA LINHA',
+                                    style: _font(16, const Color(0xFFFF6666)),
+                                  ),
+                                  const SizedBox(height: 18),
+                                  _PixelButton(
+                                    label: 'TENTAR DE NOVO',
+                                    onTap: _game.reviveAtCheckpoint,
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                  // Dev indicator
+                  if (widget.devMode)
+                    Positioned(
+                      bottom: 24,
+                      left: 140,
+                      child: _HudPanel(
+                        child: Text('DEV', style: _font(7, const Color(0xFF00FF00))),
+                      ),
+                    ),
+                ],
+              );
+            },
           ),
         ],
       ),
@@ -104,156 +170,33 @@ class _ReitoriaLevelScreenState extends State<ReitoriaLevelScreen>
   }
 }
 
-class ReitoriaHud extends StatelessWidget {
-  const ReitoriaHud({
-    super.key,
-    required this.game,
-    required this.onBack,
-    required this.showGameOver,
-    this.devMode = false,
-  });
+/// Injected into [BaseGameHud.extraTopLeft] for Phase 5.
+/// Reflects the nightfall / lighting state below the health bar.
+class _NightfallBadge extends StatelessWidget {
+  const _NightfallBadge({required this.game});
 
   final ReitoriaLevel game;
-  final VoidCallback onBack;
-  final bool showGameOver;
-  final bool devMode;
 
   @override
   Widget build(BuildContext context) {
-    return SafeArea(
-      child: Stack(
-        fit: StackFit.expand,
-        children: [
-          Positioned(
-            left: 12,
-            top: 10,
-            child: _HudPanel(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  GestureDetector(
-                    onTap: onBack,
-                    child: Text('< MAPA',
-                        style: _font(8, const Color(0xFFF5C842))),
-                  ),
-                  const SizedBox(height: 12),
-                  ValueListenableBuilder<double>(
-                    valueListenable: game.currentHealth,
-                    builder: (_, hp, __) => ValueListenableBuilder<double>(
-                      valueListenable: game.maxHealth,
-                      builder: (_, max, __) => Text(
-                        'VIDA ${hp.round()}/${max.round()}',
-                        style: _font(8, Colors.white),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  ValueListenableBuilder<bool>(
-                    valueListenable: game.nightfallActive,
-                    builder: (_, night, __) => Text(
-                      night ? 'NOITE: LANTERNA ATIVA' : 'LUZ: INSTAVEL',
-                      style: _font(
-                        7,
-                        night ? const Color(0xFF93C5FD) : const Color(0xFFFDE68A),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
+    return ValueListenableBuilder<bool>(
+      valueListenable: game.nightfallActive,
+      builder: (_, night, __) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: BoxDecoration(
+          color: const Color(0xE607070B),
+          border: Border.all(
+            color: night ? const Color(0xFF93C5FD) : const Color(0xFFF59E0B),
+            width: 1.5,
           ),
-          Positioned(
-            top: 10,
-            right: 12,
-            child: _HudPanel(
-              child: SizedBox(
-                width: 410,
-                child: ValueListenableBuilder<String>(
-                  valueListenable: game.missionText,
-                  builder: (_, text, __) => Text(
-                    text,
-                    textAlign: TextAlign.right,
-                    style: _font(8, const Color(0xFFFDE68A), height: 1.7),
-                  ),
-                ),
-              ),
-            ),
+        ),
+        child: Text(
+          night ? 'NOITE: LANTERNA ATIVA' : 'LUZ: INSTAVEL',
+          style: _font(
+            7,
+            night ? const Color(0xFF93C5FD) : const Color(0xFFFDE68A),
           ),
-          Positioned(
-            left: 140,
-            top: 10,
-            right: 460,
-            child: ValueListenableBuilder<ReitoriaRoute>(
-              valueListenable: game.route,
-              builder: (_, route, __) => route == ReitoriaRoute.cure
-                  ? _UploadStatus(game: game)
-                  : _CountdownStatus(game: game),
-            ),
-          ),
-          Positioned(
-            right: 24,
-            bottom: 20,
-            child: ValueListenableBuilder<bool>(
-              valueListenable: game.attackEnabled,
-              builder: (_, enabled, __) =>
-                  _AttackButton(enabled: enabled, onTap: game.attack),
-            ),
-          ),
-          Positioned(
-            top: 78,
-            left: 0,
-            right: 0,
-            child: ValueListenableBuilder<String?>(
-              valueListenable: game.hudMessage,
-              builder: (_, message, __) => AnimatedOpacity(
-                opacity: message == null ? 0 : 1,
-                duration: const Duration(milliseconds: 160),
-                child: IgnorePointer(
-                  child: Center(
-                    child: _HudPanel(
-                      child: Text(
-                        message ?? '',
-                        textAlign: TextAlign.center,
-                        style: _font(8, const Color(0xFFF5C842), height: 1.6),
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ),
-          if (showGameOver)
-            Positioned.fill(
-              child: ColoredBox(
-                color: Colors.black.withValues(alpha: .84),
-                child: Center(
-                  child: _HudPanel(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text('FIM DA LINHA',
-                            style: _font(16, const Color(0xFFFF6666))),
-                        const SizedBox(height: 18),
-                        _PixelButton(
-                          label: 'TENTAR DE NOVO',
-                          onTap: game.reviveAtCheckpoint,
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          if (devMode)
-            Positioned(
-              bottom: 24,
-              left: 140,
-              child: _HudPanel(
-                child: Text('DEV', style: _font(7, const Color(0xFF00FF00))),
-              ),
-            ),
-        ],
+        ),
       ),
     );
   }

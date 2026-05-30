@@ -25,7 +25,10 @@
       "PowerShell(Get-ChildItem -Path \"c:\\\\projetos\\\\PI_final\" -Recurse | Where-Object {$_.PSIsContainer} | Select-Object -ExpandProperty FullName | Sort-Object)",
       "Bash(Get-Content -Path \"c:\\\\projetos\\\\PI_final\\\\pubspec.yaml\" -TotalCount 30)",
       "Bash(git -C \"c:\\\\projetos\\\\PI_final\" status)",
-      "Bash(git -C \"c:\\\\projetos\\\\PI_final\" remote -v)"
+      "Bash(git -C \"c:\\\\projetos\\\\PI_final\" remote -v)",
+      "Bash(Get-ChildItem -Path \"c:\\\\projetos\\\\PI_final\" -Directory -Force)",
+      "Bash(Select-Object Name)",
+      "Bash(Get-ChildItem -Path \"c:\\\\projetos\\\\PI_final\\\\lib\\\\models\" -File)"
     ]
   }
 }
