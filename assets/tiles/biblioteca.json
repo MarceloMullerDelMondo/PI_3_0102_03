@@ -1,0 +1,307 @@
+{
+  "width": 160,
+  "height": 100,
+  "tilewidth": 16,
+  "tileheight": 16,
+  "layers": [
+    {
+      "name": "Background",
+      "type": "imagelayer",
+      "image": "../../assets/images/screens/biblioteca_nova.png",
+      "imagewidth": 870,
+      "imageheight": 1024,
+      "x": 0,
+      "y": 0,
+      "opacity": 1,
+      "visible": true
+    },
+    {
+      "name": "Colisoes",
+      "type": "objectgroup",
+      "objects": [
+        {
+          "id": 1,
+          "name": "topo_dir",
+          "type": "",
+          "x": 170,
+          "y": 0,
+          "width": 700,
+          "height": 40,
+          "rotation": 0,
+          "visible": true
+        },
+        {
+          "id": 2,
+          "name": "esq_baixo",
+          "type": "",
+          "x": 0,
+          "y": 150,
+          "width": 40,
+          "height": 874,
+          "rotation": 0,
+          "visible": true
+        },
+        {
+          "id": 3,
+          "name": "dir",
+          "type": "",
+          "x": 830,
+          "y": 0,
+          "width": 40,
+          "height": 1024,
+          "rotation": 0,
+          "visible": true
+        },
+        {
+          "id": 4,
+          "name": "baixo",
+          "type": "",
+          "x": 0,
+          "y": 984,
+          "width": 870,
+          "height": 40,
+          "rotation": 0,
+          "visible": true
+        },
+        {
+          "id": 5,
+          "name": "estante_arq",
+          "type": "",
+          "x": 40,
+          "y": 150,
+          "width": 240,
+          "height": 160,
+          "rotation": 0,
+          "visible": true
+        },
+        {
+          "id": 6,
+          "name": "mesa_pc_top",
+          "type": "",
+          "x": 490,
+          "y": 120,
+          "width": 70,
+          "height": 80,
+          "rotation": 0,
+          "visible": true
+        },
+        {
+          "id": 7,
+          "name": "estantes_top_dir",
+          "type": "",
+          "x": 480,
+          "y": 125,
+          "width": 350,
+          "height": 200,
+          "rotation": 0,
+          "visible": true
+        },
+        {
+          "id": 8,
+          "name": "terminais",
+          "type": "",
+          "x": 40,
+          "y": 420,
+          "width": 240,
+          "height": 125,
+          "rotation": 0,
+          "visible": true
+        },
+        {
+          "id": 9,
+          "name": "armario",
+          "type": "",
+          "x": 40,
+          "y": 560,
+          "width": 150,
+          "height": 125,
+          "rotation": 0,
+          "visible": true
+        },
+        {
+          "id": 10,
+          "name": "estantes_centro",
+          "type": "",
+          "x": 430,
+          "y": 350,
+          "width": 250,
+          "height": 180,
+          "rotation": 0,
+          "visible": true
+        },
+        {
+          "id": 11,
+          "name": "estante_ind",
+          "type": "",
+          "x": 685,
+          "y": 415,
+          "width": 125,
+          "height": 175,
+          "rotation": 0,
+          "visible": true
+        },
+        {
+          "id": 12,
+          "name": "placa_A",
+          "type": "",
+          "x": 430,
+          "y": 495,
+          "width": 100,
+          "height": 105,
+          "rotation": 0,
+          "visible": true
+        },
+        {
+          "id": 13,
+          "name": "mesas",
+          "type": "",
+          "x": 310,
+          "y": 670,
+          "width": 260,
+          "height": 145,
+          "rotation": 0,
+          "visible": true
+        },
+        {
+          "id": 14,
+          "name": "terminal_dir",
+          "type": "",
+          "x": 640,
+          "y": 660,
+          "width": 170,
+          "height": 140,
+          "rotation": 0,
+          "visible": true
+        },
+        {
+          "id": 15,
+          "name": "placa_B",
+          "type": "",
+          "x": 80,
+          "y": 730,
+          "width": 105,
+          "height": 115,
+          "rotation": 0,
+          "visible": true
+        },
+        {
+          "id": 16,
+          "name": "placa_E",
+          "type": "",
+          "x": 510,
+          "y": 730,
+          "width": 115,
+          "height": 115,
+          "rotation": 0,
+          "visible": true
+        }
+      ],
+      "opacity": 1,
+      "visible": false
+    },
+    {
+      "name": "Interagiveis",
+      "type": "objectgroup",
+      "objects": [
+        {
+          "id": 100,
+          "name": "terminal_1",
+          "type": "",
+          "x": 50,
+          "y": 548,
+          "width": 70,
+          "height": 50,
+          "rotation": 0,
+          "visible": true,
+          "properties": [
+            {
+              "name": "zoneId",
+              "type": "string",
+              "value": "terminal_1"
+            }
+          ]
+        },
+        {
+          "id": 101,
+          "name": "terminal_2",
+          "type": "",
+          "x": 130,
+          "y": 548,
+          "width": 70,
+          "height": 50,
+          "rotation": 0,
+          "visible": true,
+          "properties": [
+            {
+              "name": "zoneId",
+              "type": "string",
+              "value": "terminal_2"
+            }
+          ]
+        },
+        {
+          "id": 102,
+          "name": "terminal_3",
+          "type": "",
+          "x": 200,
+          "y": 548,
+          "width": 70,
+          "height": 50,
+          "rotation": 0,
+          "visible": true,
+          "properties": [
+            {
+              "name": "zoneId",
+              "type": "string",
+              "value": "terminal_3"
+            }
+          ]
+        },
+        {
+          "id": 103,
+          "name": "quadro_avisos",
+          "type": "",
+          "x": 295,
+          "y": 45,
+          "width": 150,
+          "height": 55,
+          "rotation": 0,
+          "visible": true,
+          "properties": [
+            {
+              "name": "zoneId",
+              "type": "string",
+              "value": "quadro_avisos"
+            }
+          ]
+        },
+        {
+          "id": 104,
+          "name": "porta_saida",
+          "type": "",
+          "x": 0,
+          "y": 0,
+          "width": 170,
+          "height": 150,
+          "rotation": 0,
+          "visible": true,
+          "properties": [
+            {
+              "name": "zoneId",
+              "type": "string",
+              "value": "porta_saida"
+            }
+          ]
+        }
+      ],
+      "opacity": 1,
+      "visible": false
+    }
+  ],
+  "nextobjectid": 200,
+  "orientation": "orthogonal",
+  "renderorder": "right-down",
+  "tiledversion": "1.10.0",
+  "type": "map",
+  "version": "1.10"
+}

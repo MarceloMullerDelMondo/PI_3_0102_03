@@ -144,14 +144,12 @@ class H15Game extends FlameGame with HasCollisionDetection {
     camera.viewport.add(_darkness!);
 
     // ── Joystick na viewport — margem para landscape (polegar esquerdo) ────────
+    // Prioridade 1001 garante que renderiza acima do DarknessOverlay (1000).
     final joystickComponent = JoystickComponent(
-      knob: CircleComponent(
-          radius: 26, paint: Paint()..color = const Color(0xFFF5C842)),
-      background: CircleComponent(
-          radius: 68, paint: Paint()..color = const Color(0xAAE5E7EB)),
-      // Esquerda extrema para o polegar em landscape
+      knob: CircleComponent(radius: 26, paint: Paint()..color = const Color(0xFFF5C842)),
+      background: CircleComponent(radius: 68, paint: Paint()..color = const Color(0xAAE5E7EB)),
       margin: const EdgeInsets.only(left: 28, bottom: 28),
-      priority: 200,
+      priority: 1001,
     );
     _joystick = joystickComponent;
     camera.viewport.add(joystickComponent);
@@ -161,12 +159,16 @@ class H15Game extends FlameGame with HasCollisionDetection {
   void onGameResize(Vector2 size) {
     super.onGameResize(size);
     if (_enableLegacyIsoCollision && _walls.isNotEmpty) {
-      for (final w in _walls) w.removeFromParent();
+      for (final w in _walls) {
+        w.removeFromParent();
+      }
       _walls.clear();
       _setupWalls(size);
     }
     if (_enableLegacyQuestZones && _interactables.isNotEmpty) {
-      for (final z in _interactables) z.removeFromParent();
+      for (final z in _interactables) {
+        z.removeFromParent();
+      }
       _interactables.clear();
       _setupInteractables(size);
     }
@@ -319,9 +321,10 @@ class H15Game extends FlameGame with HasCollisionDetection {
     final y = o.y;
     if (o.polygon.isNotEmpty) {
       final verts = o.polygon.map((p) => Vector2(x + p.x, y + p.y)).toList();
-      if (verts.length >= 3)
+      if (verts.length >= 3) {
         return IsometricWall(vertices: verts, showDebug: showDebugWalls)
           ..priority = 1;
+      }
       return null;
     }
     var w = o.width;
@@ -345,9 +348,10 @@ class H15Game extends FlameGame with HasCollisionDetection {
           .map((p) => Vector2(x + (p['x'] as num? ?? 0).toDouble(),
               y + (p['y'] as num? ?? 0).toDouble()))
           .toList();
-      if (verts.length >= 3)
+      if (verts.length >= 3) {
         return IsometricWall(vertices: verts, showDebug: showDebugWalls)
           ..priority = 1;
+      }
       return null;
     }
     var w = (o['width'] as num? ?? 0).toDouble();
@@ -753,6 +757,46 @@ class H15Game extends FlameGame with HasCollisionDetection {
     Future<void>.delayed(const Duration(seconds: 2), () {
       if (hudMessage.value == message) hudMessage.value = null;
     });
+  }
+
+  void devSkipMission() {
+    // Fecha qualquer overlay aberto antes de avançar
+    if (questDialogOpen.value) {
+      for (final id in ['QuestDialog', 'ServerDialog', 'Quest2Dialog', 'ColorGame', 'LightSwitch']) {
+        overlays.remove(id);
+      }
+      questDialogOpen.value = false;
+      resumeEngine();
+    }
+
+    // Sem arma → equipa e inicia a horda
+    if (equippedWeapon.value == null) {
+      equipWeapon('Espada');
+      return;
+    }
+
+    // Horda em andamento → completa instantaneamente
+    if (_hordeActive && !_hordeCompleted) {
+      _clearZombies();
+      zombiesKilled.value = _hordeTargetKills;
+      _completeHordeMission();
+      return;
+    }
+
+    // Quest 2 pendente (NPC / jogo de cores) → avança para o gerador
+    final phase = quest2Phase.value;
+    if (phase == Quest2Phase.npcSpawned ||
+        phase == Quest2Phase.dialogueActive ||
+        phase == Quest2Phase.miniGameActive) {
+      quest2Manager.completeColorGame(success: true);
+      return;
+    }
+
+    // Gerador não ativado → ativa direto
+    if (phase == Quest2Phase.success && _generator != null) {
+      activateGenerator();
+      return;
+    }
   }
 
   // ── Timer de sobrevivência ──────────────────────────────────────────────────
@@ -1448,9 +1492,10 @@ class InvisibleWall extends SolidObstacle {
 
   @override
   void render(Canvas canvas) {
-    if (showDebug)
+    if (showDebug) {
       canvas.drawRect(
           size.toRect(), Paint()..color = Colors.red.withValues(alpha: .24));
+    }
     super.render(canvas);
   }
 }
@@ -1500,7 +1545,9 @@ class IsometricWall extends SolidObstacle {
   void render(Canvas canvas) {
     if (showDebug) {
       final path = Path()..moveTo(vertices.first.x, vertices.first.y);
-      for (final v in vertices.skip(1)) path.lineTo(v.x, v.y);
+      for (final v in vertices.skip(1)) {
+        path.lineTo(v.x, v.y);
+      }
       path.close();
       canvas.drawPath(path, Paint()..color = Colors.red.withValues(alpha: .24));
       canvas.drawPath(
@@ -1530,8 +1577,9 @@ class IsometricWall extends SolidObstacle {
       final vi = vertices[i];
       final vj = vertices[j];
       if (((vi.y > p.y) != (vj.y > p.y)) &&
-          (p.x < (vj.x - vi.x) * (p.y - vi.y) / (vj.y - vi.y) + vi.x))
+          (p.x < (vj.x - vi.x) * (p.y - vi.y) / (vj.y - vi.y) + vi.x)) {
         inside = !inside;
+      }
     }
     return inside;
   }

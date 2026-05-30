@@ -12,7 +12,8 @@ import '../game/h15_game.dart';
 // ─────────────────────────────────────────────────────────────────────────────
 class H15LevelScreen extends StatefulWidget {
   final String playerName;
-  const H15LevelScreen({super.key, required this.playerName});
+  final bool devMode;
+  const H15LevelScreen({super.key, required this.playerName, this.devMode = false});
 
   @override
   State<H15LevelScreen> createState() => _H15LevelScreenState();
@@ -87,6 +88,7 @@ class _H15LevelScreenState extends State<H15LevelScreen>
                 return GameHudOverlay(
                   game: _game,
                   onBack: () => Navigator.of(context).pop(false),
+                  devMode: widget.devMode,
                 );
               },
             ),
@@ -143,11 +145,13 @@ class _H15LoadingScreen extends StatelessWidget {
 class GameHudOverlay extends StatelessWidget {
   final H15Game game;
   final VoidCallback onBack;
+  final bool devMode;
 
   const GameHudOverlay({
     super.key,
     required this.game,
     required this.onBack,
+    this.devMode = false,
   });
 
   @override
@@ -268,6 +272,33 @@ class GameHudOverlay extends StatelessWidget {
               ),
             ),
           ),
+
+          // ── DEV: Botão pular missão ───────────────────────────────────────
+          if (devMode)
+            Positioned(
+              top: 10,
+              left: 0,
+              right: 0,
+              child: Center(
+                child: GestureDetector(
+                  onTap: game.devSkipMission,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: const Color(0xDD001400),
+                      border: Border.all(color: const Color(0xFF00FF00), width: 1.5),
+                    ),
+                    child: Text(
+                      '[DEV] PULAR MISSÃO',
+                      style: GoogleFonts.pressStart2p(
+                        fontSize: 7,
+                        color: const Color(0xFF00FF00),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
 
           // ── CANTO INFERIOR DIREITO EXTREMO: Botão ATK ────────────────────
           // Joystick está no viewport Flame — canto inferior esquerdo extremo

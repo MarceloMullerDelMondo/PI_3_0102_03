@@ -1,14 +1,17 @@
 import 'dart:async';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:geolocator/geolocator.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../services/audio_manager.dart';
 import '../services/firebase_service.dart';
+import '../services/location_service.dart';
+import 'biblioteca_level_screen.dart';
+import 'caa_level_screen.dart';
+import 'cafeteria_level_screen.dart';
 import 'h15_level_screen.dart';
+import 'reitoria_level_screen.dart';
 
 abstract class _C {
   static const bg = Color(0xFF1A1208);
@@ -20,6 +23,8 @@ abstract class _C {
   static const hud = Color(0xFFCCA040);
   static const red = Color(0xFF8B0000);
 }
+
+const double _gpsUnlockRadiusMeters = 50.0;
 
 class _MapArea {
   final int fase;
@@ -45,6 +50,7 @@ class _MapArea {
 
 // relX/relY = centre of the marker as a fraction of live screen size.
 // Calibrated from the user's screenshot (browser 500×875 game area).
+// NOTE: Fase 3 (Biblioteca) marker position and GPS coords need on-site calibration.
 const List<_MapArea> _areas = [
   _MapArea(
     fase: 1,
@@ -53,28 +59,28 @@ const List<_MapArea> _areas = [
     relY: 0.78,
     relW: 0.22,
     relH: 0.16,
-    lat: -22.83316,
-    lng: -47.05270,
+    lat: -22.834108582764266,
+    lng: -47.0526303597742,
   ),
   _MapArea(
     fase: 2,
-    nome: 'Biblioteca Central',
-    relX: 0.26,
-    relY: 0.43,
-    relW: 0.22,
-    relH: 0.16,
-    lat: -22.83400,
-    lng: -47.05350,
-  ),
-  _MapArea(
-    fase: 3,
-    nome: 'Refeitório Central',
+    nome: 'Refeitorio Central',
     relX: 0.79,
     relY: 0.46,
     relW: 0.22,
     relH: 0.16,
-    lat: -22.83500,
-    lng: -47.05100,
+    lat: -22.833053216294353,
+    lng: -47.05204664488465,
+  ),
+  _MapArea(
+    fase: 3,
+    nome: 'Biblioteca',
+    relX: 0.45,
+    relY: 0.28,
+    relW: 0.22,
+    relH: 0.16,
+    lat: -22.833823430629206,
+    lng: -47.05189353930646,
   ),
   _MapArea(
     fase: 4,
@@ -83,8 +89,8 @@ const List<_MapArea> _areas = [
     relY: 0.57,
     relW: 0.22,
     relH: 0.16,
-    lat: -22.83200,
-    lng: -47.05450,
+    lat: -22.83336777023198,
+    lng: -47.05159051796952,
   ),
   _MapArea(
     fase: 5,
@@ -93,8 +99,8 @@ const List<_MapArea> _areas = [
     relY: 0.87,
     relW: 0.22,
     relH: 0.16,
-    lat: -22.83100,
-    lng: -47.05200,
+    lat: -22.83496957419998,
+    lng: -47.0511111103182,
   ),
 ];
 
@@ -154,16 +160,32 @@ class _MapSelectionScreenState extends State<MapSelectionScreen>
     if (_loading || _checkingGps) return;
     HapticFeedback.mediumImpact();
 
-    if (area.fase > _faseAtual) {
-      _pixelToast(
-        '[ÁREA BLOQUEADA] Conclua a zona anterior para acessar',
-        isError: false,
-      );
-      return;
+    // Em modo normal: checar progressão e Firebase
+    if (!widget.devMode) {
+      // CAA (Fase 4) exige que a missão principal do Refeitório esteja concluída.
+      if (area.fase == 4) {
+        final unlocked =
+            await FirebaseService.instance.canAccessArea3(widget.playerName);
+        if (!unlocked) {
+          _pixelToast(
+            'Voce ainda precisa concluir os objetivos do Refeitorio antes de seguir para o CAA.',
+            isError: false,
+          );
+          return;
+        }
+      }
+
+      if (area.fase > _faseAtual) {
+        _pixelToast(
+          '[AREA BLOQUEADA] Conclua a zona anterior para liberar este ponto no mapa.',
+          isError: false,
+        );
+        return;
+      }
     }
 
-    // Levels 2+ are not yet implemented
-    if (area.fase > 1) {
+    // Fases futuras ainda nao implementadas (independente do modo)
+    if (area.fase > 5) {
       _showWipDialog(area.fase);
       return;
     }
@@ -179,85 +201,69 @@ class _MapSelectionScreenState extends State<MapSelectionScreen>
 
     final completed = await navigator.push<bool>(
       MaterialPageRoute(
-        builder: (_) => H15LevelScreen(playerName: widget.playerName),
+        builder: (_) => switch (area.fase) {
+          5 => ReitoriaLevelScreen(
+              playerName: widget.playerName,
+              devMode: widget.devMode,
+            ),
+          4 => CaaLevelScreen(
+              playerName: widget.playerName,
+              devMode: widget.devMode,
+            ),
+          3 => BibliotecaLevelScreen(
+              playerName: widget.playerName,
+              devMode: widget.devMode,
+            ),
+          2 => CafeteriaLevelScreen(
+              playerName: widget.playerName,
+              devMode: widget.devMode,
+            ),
+          _ => H15LevelScreen(
+              playerName: widget.playerName,
+              devMode: widget.devMode,
+            ),
+        },
       ),
     );
 
     // Restore menu BGM when returning from the level (respects music ON/OFF).
     if (mounted) await AudioManager.instance.resumeMenuBgm();
 
-    if (completed == true && mounted && area.fase == _faseAtual) {
-      await FirebaseService.instance.unlockNextPhase(widget.playerName);
+    if (completed == true && mounted) {
+      // Read prefs directly: levels that manage their own progression (e.g. Fase 2
+      // calls completeArea2 before popping) will already have advanced faseAtual,
+      // so we only call unlockNextPhase when the level has NOT already done so.
       final prefs = await SharedPreferences.getInstance();
-      if (!mounted) return;
-      setState(() {
-        _faseAtual = prefs.getInt(PrefKeys.faseAtual) ?? _faseAtual;
-      });
+      final savedFase = prefs.getInt(PrefKeys.faseAtual) ?? 1;
+      if (savedFase <= area.fase) {
+        await FirebaseService.instance.unlockNextPhase(widget.playerName);
+      }
     }
+    if (mounted) await _loadProgress();
   }
 
+
   Future<bool> _canEnterArea(_MapArea area) async {
-    if (widget.devMode) {
-      _pixelToast('[DEV MODE] Acesso liberado sem GPS', isError: false);
-      return true;
-    }
-
-    if (kIsWeb) {
-      _pixelToast(
-        '[GPS INDISPONÍVEL] No Chrome, ative o modo DEV para testar.',
-        isError: true,
-      );
-      return false;
-    }
-
     setState(() {
       _checkingGps = true;
       _checkingFase = area.fase;
     });
 
     try {
-      final serviceEnabled = await Geolocator.isLocationServiceEnabled();
-      if (!serviceEnabled) {
-        _pixelToast('[GPS INDISPONÍVEL] Habilite a localização.', isError: true);
-        return false;
-      }
+      final result = await LocationService.instance
+          .isWithinRadius(
+            area.lat,
+            area.lng,
+            radiusMeters: _gpsUnlockRadiusMeters,
+            devMode: widget.devMode,
+          )
+          .timeout(const Duration(seconds: 12));
 
-      var permission = await Geolocator.checkPermission();
-      if (permission == LocationPermission.denied) {
-        permission = await Geolocator.requestPermission();
-      }
-
-      if (permission == LocationPermission.denied ||
-          permission == LocationPermission.deniedForever) {
-        _pixelToast('[GPS NEGADO] Permita a localização para entrar.', isError: true);
-        return false;
-      }
-
-      final position = await Geolocator.getCurrentPosition(
-        locationSettings: const LocationSettings(
-          accuracy: LocationAccuracy.high,
-        ),
-      ).timeout(const Duration(seconds: 10));
-
-      final distance = Geolocator.distanceBetween(
-        position.latitude,
-        position.longitude,
-        area.lat,
-        area.lng,
-      );
-
-      if (distance <= 50) return true;
-
-      _pixelToast(
-        '[SINAL FRACO] Aproxime-se do local.\nDistância atual: ${distance.toStringAsFixed(0)}m',
-        isError: true,
-      );
-      return false;
+      final msg = result.toastMessage;
+      if (msg != null) _pixelToast(msg, isError: result.isError);
+      return result.allowed;
     } on TimeoutException {
       _pixelToast('[GPS LENTO] Tente novamente em alguns segundos.', isError: true);
-      return false;
-    } catch (_) {
-      _pixelToast('[GPS INDISPONÍVEL] Não foi possível obter sua posição.', isError: true);
       return false;
     } finally {
       if (mounted) {
@@ -400,9 +406,9 @@ class _MapSelectionScreenState extends State<MapSelectionScreen>
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// _MapMarker — pixel-art styled location pin for the map
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// _MapMarker â€” pixel-art styled location pin for the map
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 class _MapMarker extends StatelessWidget {
   final String nome;
   final int fase;
@@ -435,7 +441,7 @@ class _MapMarker extends StatelessWidget {
   }
 }
 
-// ── Active ────────────────────────────────────────────────────────────────────
+// â”€â”€ Active â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 class _ActiveMarker extends StatelessWidget {
   final String nome;
   final int fase;
@@ -510,7 +516,7 @@ class _ActiveMarker extends StatelessWidget {
   }
 }
 
-// ── Completed ─────────────────────────────────────────────────────────────────
+// â”€â”€ Completed â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 class _CompletedMarker extends StatelessWidget {
   final int fase;
   const _CompletedMarker({required this.fase});
@@ -565,7 +571,7 @@ class _CompletedMarker extends StatelessWidget {
   }
 }
 
-// ── Locked ────────────────────────────────────────────────────────────────────
+// â”€â”€ Locked â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 class _LockedMarker extends StatelessWidget {
   const _LockedMarker();
 
@@ -603,7 +609,7 @@ class _LockedMarker extends StatelessWidget {
   }
 }
 
-// ── Triangle pointer ──────────────────────────────────────────────────────────
+// â”€â”€ Triangle pointer â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 class _TrianglePainter extends CustomPainter {
   final Color color;
   const _TrianglePainter({required this.color});
@@ -698,7 +704,7 @@ class MissionScreen extends StatelessWidget {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Text(
-                      'MISSÃO $fase',
+                      'MISSÃƒO $fase',
                       textAlign: TextAlign.center,
                       style: GoogleFonts.pressStart2p(
                         fontSize: 18,
@@ -775,7 +781,7 @@ class _CompleteMissionButtonState extends State<_CompleteMissionButton> {
                 ],
         ),
         child: Text(
-          'CONCLUIR MISSÃO\nE SOBREVIVER',
+          'CONCLUIR MISSÃƒO\nE SOBREVIVER',
           textAlign: TextAlign.center,
           style: GoogleFonts.pressStart2p(
             fontSize: 13,
