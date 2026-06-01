@@ -1,4 +1,5 @@
 import 'dart:async' as async;
+import 'dart:convert';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
@@ -29,7 +30,8 @@ class CafeteriaGame extends FlameGame with HasCollisionDetection {
 
   final String playerName;
   final math.Random _rng = math.Random();
-  static final Vector2 _mapSize = Vector2(1142, 928);
+  // Mutable — overwritten from the Tiled image layer dimensions on load.
+  Vector2 _mapSize = Vector2(1916, 1568);
 
   CafeteriaPlayerComponent? player;
   JoystickComponent? _joystick;
@@ -88,13 +90,16 @@ class CafeteriaGame extends FlameGame with HasCollisionDetection {
   @override
   Future<void> onLoad() async {
     await super.onLoad();
-
-    // ── Mesma ordem do H15 que funciona ──────────────────────────────────────
-    // 1. Posição inicial da câmera (sem zoom/bounds ainda)
     camera.viewfinder.anchor = Anchor.center;
-    camera.viewfinder.position = Vector2(420, 430);
 
-    // 2. Background
+    // 1. Parse Tiled map — sets _mapSize and spawns all entities.
+    //    Returns player spawn position (from the 'player spawn' layer).
+    final mapData = await _loadMapJson();
+    final spawn = mapData != null
+        ? await _spawnFromTiled(mapData)
+        : _spawnFallback();
+
+    // 2. Background at confirmed map dimensions.
     try {
       _background = SpriteComponent(
         sprite: await loadSprite('screens/cafeteria_map.png'),
@@ -107,36 +112,29 @@ class CafeteriaGame extends FlameGame with HasCollisionDetection {
       world.add(CafeteriaFallbackMap(size: _mapSize)..priority = -10);
     }
 
-    // 3. Paredes
-    _addBorderWalls();
-    _setupStaticWalls();
-
-    // 4. Player — carrega sprite e aguarda montagem (igual ao H15)
+    // 3. Player.
     late final ui.Image playerImg;
     try {
       playerImg = await images.load('player/player_sprite.jpg');
     } catch (_) {
-      // Fallback 1×1 transparente
       final rec = ui.PictureRecorder();
-      ui.Canvas(rec).drawRect(const ui.Rect.fromLTWH(0,0,1,1), ui.Paint());
+      ui.Canvas(rec).drawRect(const ui.Rect.fromLTWH(0, 0, 1, 1), ui.Paint());
       playerImg = await rec.endRecording().toImage(1, 1);
     }
     final playerComp = CafeteriaPlayerComponent.fromImage(playerImg)
-      ..position = Vector2(420, 430)
+      ..position = spawn
       ..priority = 5;
     player = playerComp;
     await world.add(playerComp);
 
-    // 5. Zoom + bounds + follow — DEPOIS do player estar montado.
-    // The zoom must be high enough that the viewport (size / zoom) never exceeds
-    // the map dimensions, otherwise Flame cannot satisfy the bounds constraint
-    // and the black void bleeds in at the edges.
+    // 4. Camera — after player is mounted.
+    camera.viewfinder.position = spawn;
     final minZoom = math.max(size.x / _mapSize.x, size.y / _mapSize.y);
     camera.viewfinder.zoom = math.max(minZoom, 1.5);
     camera.setBounds(Rectangle.fromLTWH(0, 0, _mapSize.x, _mapSize.y));
     camera.follow(playerComp, snap: true);
 
-    // 6. Arma salva do H15
+    // 5. Weapon from Firebase.
     FirebaseService.instance.loadWeapon().then((weapon) async {
       if (weapon == null || weapon.isEmpty) return;
       final asset = weapon == 'Duas Adagas'
@@ -151,49 +149,299 @@ class CafeteriaGame extends FlameGame with HasCollisionDetection {
       }
     }).catchError((_) {});
 
-    // 7. NPCs, props, zumbis, joystick
-    // Marcos fica no armazém de suprimentos — lado direito do mapa
-    _marcos = MarcosComponent(game: this)
-      ..position = Vector2(870, 490)
-      ..priority = 8;
-    world.add(_marcos!);
-
-    _setupProps();
+    // 6. Zombies (no Tiled layer — scale to new map).
     _spawnInitialZombies();
+
+    // 7. Joystick.
     _setupJoystick();
 
-    // 8. Dica inicial
+    // 8. Intro hint.
     Future<void>.delayed(const Duration(milliseconds: 800), () {
       if (!gameOver.value) showHudMessage('Encontre Marcos no armazem de suprimentos.');
     });
 
-    // 9. Firebase em background
+    // 9. Firebase state.
     _loadSavedProgress()
         .timeout(const Duration(seconds: 6))
         .catchError((e) => debugPrint('_loadSavedProgress falhou: $e'));
-
     _syncAreaState().catchError((e) => debugPrint('_syncAreaState onLoad: $e'));
   }
 
-  void _addBorderWalls() {
-    const t = 8.0;
-    final ms = _mapSize;
-    for (final spec in [
-      // top, bottom, left, right
-      [Vector2.zero(), Vector2(ms.x, t)],
-      [Vector2(0, ms.y - t), Vector2(ms.x, t)],
-      [Vector2.zero(), Vector2(t, ms.y)],
-      [Vector2(ms.x - t, 0), Vector2(t, ms.y)],
-    ]) {
-      final w = CafWall(position: spec[0], size: spec[1]);
-      _walls.add(w);
-      world.add(w);
+  // ── Tiled map loader ───────────────────────────────────────────────────────
+
+  Future<Map<String, dynamic>?> _loadMapJson() async {
+    try {
+      final raw = await rootBundle
+          .loadString('assets/tiles/refeitorio_collisions.json');
+      return jsonDecode(raw) as Map<String, dynamic>;
+    } catch (e) {
+      debugPrint('CafeteriaGame: map JSON load failed: $e');
+      return null;
     }
   }
 
-  void _setupStaticWalls() {
-    // Sem colisão de paredes — mesas causam dano se não quebradas primeiro
-    // Ver _checkTableDamage() no update()
+  // Reads the map pixel dimensions from the imagelayer entry.
+  Vector2 _readMapSizeFromData(Map<String, dynamic> map) {
+    for (final layer in (map['layers'] as List<dynamic>)
+        .whereType<Map<String, dynamic>>()) {
+      if (layer['type'] == 'imagelayer') {
+        final w = (layer['imagewidth'] as num? ?? 0).toDouble();
+        final h = (layer['imageheight'] as num? ?? 0).toDouble();
+        if (w > 0 && h > 0) return Vector2(w, h);
+      }
+    }
+    return Vector2(1916, 1568);
+  }
+
+  // Main Tiled parser. Iterates every ObjectGroup layer and spawns the
+  // matching component. Returns the player spawn position.
+  Future<Vector2> _spawnFromTiled(Map<String, dynamic> mapData) async {
+    _mapSize = _readMapSizeFromData(mapData);
+
+    Vector2 playerSpawn = Vector2(1740, 1262); // Tiled default
+
+    final layers = (mapData['layers'] as List<dynamic>)
+        .whereType<Map<String, dynamic>>();
+
+    for (final layer in layers) {
+      final name = (layer['name'] as String? ?? '').toLowerCase().trim();
+      final objects = (layer['objects'] as List<dynamic>? ?? [])
+          .whereType<Map<String, dynamic>>()
+          .toList();
+      if (objects.isEmpty) continue;
+
+      switch (name) {
+        case 'player spawn':
+          final pt = _firstPoint(objects);
+          if (pt != null) playerSpawn = pt;
+
+        case 'marcos npc':
+          final pos = _firstPoint(objects) ?? Vector2(1222, 358);
+          _marcos = MarcosComponent(game: this)
+            ..position = pos
+            ..priority = 8;
+          world.add(_marcos!);
+
+        case 'colisoes':
+          _spawnWalls(objects);
+
+        case 'fusivel':
+          for (final obj in objects) {
+            _addPickup('fuse', _centerOf(obj));
+          }
+
+        case 'pecaradio':
+          for (final obj in objects) {
+            _addPickup('radioPart', _centerOf(obj));
+          }
+
+        case 'radio':
+          for (final obj in objects) {
+            _addPickup('radio', _centerOf(obj));
+          }
+
+        case 'pecinha':
+          for (final obj in objects) {
+            _addPickup('pecinha', _centerOf(obj));
+          }
+
+        case 'armario':
+          _spawnLocker(objects.first);
+
+        case 'painel eletrico':
+          _spawnPanel(objects.first);
+
+        case 'reforco defesa':
+          _spawnDefenseProps(objects);
+
+        case 'table_front':
+          _spawnTableProps(objects, 'objects/table_front.png');
+        case 'table_s':
+          _spawnTableProps(objects, 'objects/table_s.png');
+        case 'table_e':
+          _spawnTableProps(objects, 'objects/table_e.png');
+        case 'table_ne':
+          _spawnTableProps(objects, 'objects/table_ne.png');
+        case 'table_se':
+          _spawnTableProps(objects, 'objects/table_se.png');
+        case 'table_n':
+          _spawnTableProps(objects, 'objects/table_n.png');
+        case 'table_w':
+          _spawnTableProps(objects, 'objects/table_w.png', kind: 'areaC');
+      }
+    }
+
+    return playerSpawn;
+  }
+
+  // Fallback when the JSON fails to load: hardcoded 1142×928 layout.
+  Vector2 _spawnFallback() {
+    _mapSize = Vector2(1142, 928);
+    _addBorderWalls();
+    final specs = [
+      CafPropSpec('table', Vector2(170, 183), Vector2(130, 52), asset: 'objects/table_front.png'),
+      CafPropSpec('table', Vector2(450, 183), Vector2(130, 52), asset: 'objects/table_s.png'),
+      CafPropSpec('table', Vector2(620, 183), Vector2(130, 52), asset: 'objects/table_e.png'),
+      CafPropSpec('table', Vector2(160, 318), Vector2(130, 52), asset: 'objects/table_n.png'),
+      CafPropSpec('table', Vector2(510, 358), Vector2(90, 100),  asset: 'objects/table_ne.png'),
+      CafPropSpec('table', Vector2(700, 358), Vector2(92, 100),  asset: 'objects/table_se.png'),
+      CafPropSpec('areaC', Vector2(955, 400), Vector2(130, 58),  asset: 'objects/table_w.png'),
+      CafPropSpec('defense', Vector2(700, 560), Vector2(60, 42)),
+      CafPropSpec('defense', Vector2(820, 590), Vector2(60, 42)),
+      CafPropSpec('defense', Vector2(940, 520), Vector2(60, 42)),
+    ];
+    for (final spec in specs) {
+      final prop = CafeteriaProp(spec: spec, game: this)..priority = 8;
+      _props.add(prop);
+      world.add(prop);
+    }
+    _addPickup('fuse',      Vector2(260, 180));
+    _addPickup('fuse',      Vector2(900, 700));
+    _addPickup('radioPart', Vector2(1020, 320));
+    _addPickup('radio',     Vector2(855, 660));
+    _addPickup('vitalBoost', Vector2(1090, 780));
+    _panel = ElectricalPanelComponent(game: this)
+      ..position = Vector2(810, 660)
+      ..priority = 8;
+    world.add(_panel!);
+    const lockerY = 740.0;
+    _locker = LockerComponent(game: this)
+      ..position = Vector2(1075, lockerY)
+      ..priority = lockerY.ceil();
+    world.add(_locker!);
+    _marcos = MarcosComponent(game: this)
+      ..position = Vector2(870, 490)
+      ..priority = 8;
+    world.add(_marcos!);
+    return Vector2(420, 430);
+  }
+
+  // ── Tiled wall spawners ────────────────────────────────────────────────────
+
+  void _spawnWalls(List<Map<String, dynamic>> objects) {
+    for (final obj in objects) {
+      final ox = (obj['x'] as num).toDouble();
+      final oy = (obj['y'] as num).toDouble();
+      final polygon = obj['polygon'] as List<dynamic>?;
+      if (polygon != null && polygon.isNotEmpty) {
+        _addPolygonWall(ox, oy, polygon);
+      } else {
+        final w = (obj['width'] as num? ?? 0).toDouble();
+        final h = (obj['height'] as num? ?? 0).toDouble();
+        if (w > 0 && h > 0) _addCafWall(Vector2(ox, oy), Vector2(w, h));
+      }
+    }
+  }
+
+  // Polygon → AABB. Guard skips shapes larger than 900 px on any axis.
+  void _addPolygonWall(double ox, double oy, List<dynamic> polygon) {
+    var minX = double.infinity, minY = double.infinity;
+    var maxX = double.negativeInfinity, maxY = double.negativeInfinity;
+    for (final v in polygon.whereType<Map<String, dynamic>>()) {
+      final vx = (v['x'] as num).toDouble();
+      final vy = (v['y'] as num).toDouble();
+      if (vx < minX) minX = vx;
+      if (vy < minY) minY = vy;
+      if (vx > maxX) maxX = vx;
+      if (vy > maxY) maxY = vy;
+    }
+    final w = maxX - minX;
+    final h = maxY - minY;
+    if (w <= 0 || h <= 0 || w > 900 || h > 900) return;
+    _addCafWall(Vector2(ox + minX, oy + minY), Vector2(w, h));
+  }
+
+  void _addCafWall(Vector2 pos, Vector2 sz) {
+    final w = CafWall(position: pos, size: sz);
+    _walls.add(w);
+    world.add(w);
+  }
+
+  // Fallback border walls used only when JSON loading fails.
+  void _addBorderWalls() {
+    const t = 8.0;
+    for (final s in [
+      (Vector2.zero(),             Vector2(_mapSize.x, t)),
+      (Vector2(0, _mapSize.y - t), Vector2(_mapSize.x, t)),
+      (Vector2.zero(),             Vector2(t, _mapSize.y)),
+      (Vector2(_mapSize.x - t, 0), Vector2(t, _mapSize.y)),
+    ]) {
+      _addCafWall(s.$1, s.$2);
+    }
+  }
+
+  // ── Tiled entity spawners ──────────────────────────────────────────────────
+
+  void _spawnTableProps(
+    List<Map<String, dynamic>> objects,
+    String asset, {
+    String kind = 'table',
+  }) {
+    for (final obj in objects) {
+      final w = (obj['width'] as num? ?? 80).toDouble();
+      final h = (obj['height'] as num? ?? 40).toDouble();
+      final x = (obj['x'] as num).toDouble() + w / 2;
+      final y = (obj['y'] as num).toDouble() + h / 2;
+      final spec = CafPropSpec(kind, Vector2(x, y), Vector2(w, h), asset: asset);
+      final prop = CafeteriaProp(spec: spec, game: this)..priority = 10;
+      _props.add(prop);
+      world.add(prop);
+    }
+  }
+
+  void _spawnDefenseProps(List<Map<String, dynamic>> objects) {
+    for (final obj in objects) {
+      final pos = _centerOf(obj);
+      final spec = CafPropSpec('defense', pos, Vector2(60, 42));
+      final prop = CafeteriaProp(spec: spec, game: this)..priority = 10;
+      _props.add(prop);
+      world.add(prop);
+    }
+  }
+
+  void _spawnPanel(Map<String, dynamic> obj) {
+    final w = (obj['width'] as num? ?? 80).toDouble();
+    final h = (obj['height'] as num? ?? 60).toDouble();
+    final x = (obj['x'] as num).toDouble() + w / 2;
+    final y = (obj['y'] as num).toDouble() + h / 2;
+    _panel = ElectricalPanelComponent(game: this)
+      ..position = Vector2(x, y)
+      ..size = Vector2(w, h)
+      ..priority = 10;
+    world.add(_panel!);
+  }
+
+  void _spawnLocker(Map<String, dynamic> obj) {
+    final w = (obj['width'] as num? ?? 80).toDouble();
+    final h = (obj['height'] as num? ?? 110).toDouble();
+    final x = (obj['x'] as num).toDouble() + w / 2;
+    final y = (obj['y'] as num).toDouble() + h; // Anchor.bottomCenter → bottom of rect
+    _locker = LockerComponent(game: this)
+      ..position = Vector2(x, y)
+      ..priority = y.ceil();
+    world.add(_locker!);
+  }
+
+  // ── Tiled coordinate helpers ───────────────────────────────────────────────
+
+  // Returns the center of an object. For point objects x/y is already the point.
+  Vector2 _centerOf(Map<String, dynamic> obj) {
+    final x = (obj['x'] as num).toDouble();
+    final y = (obj['y'] as num).toDouble();
+    final w = (obj['width'] as num? ?? 0).toDouble();
+    final h = (obj['height'] as num? ?? 0).toDouble();
+    if (obj['point'] == true || (w == 0 && h == 0)) return Vector2(x, y);
+    return Vector2(x + w / 2, y + h / 2);
+  }
+
+  // Returns x/y of the first object in the list (point or rect top-left).
+  Vector2? _firstPoint(List<Map<String, dynamic>> objects) {
+    if (objects.isEmpty) return null;
+    final obj = objects.first;
+    return Vector2(
+      (obj['x'] as num).toDouble(),
+      (obj['y'] as num).toDouble(),
+    );
   }
 
   void _setupJoystick() {
@@ -214,77 +462,19 @@ class CafeteriaGame extends FlameGame with HasCollisionDetection {
         center.y.clamp(size.y / 2, _mapSize.y - size.y / 2).toDouble(),
       );
 
-  void _setupProps() {
-    // Props visuais alinhados com as paredes (1142×928)
-    final specs = [
-      // Mesas visíveis — alinham com CafWall da fileira 1
-      CafPropSpec('table', Vector2(170, 183), Vector2(130, 52), asset: 'objects/table_front.png'),
-      CafPropSpec('table', Vector2(450, 183), Vector2(130, 52), asset: 'objects/table_s.png'),
-      // Mesa adicional entre gap e lado direito
-      CafPropSpec('table', Vector2(620, 183), Vector2(130, 52), asset: 'objects/table_e.png'),
-
-      // Mesas visíveis — fileira 2
-      CafPropSpec('table', Vector2(160, 318), Vector2(130, 52), asset: 'objects/table_n.png'),
-      CafPropSpec('table', Vector2(510, 358), Vector2(90, 100), asset: 'objects/table_ne.png'),
-      CafPropSpec('table', Vector2(700, 358), Vector2(92, 100), asset: 'objects/table_se.png'),
-
-      // Barricada da Área C — lado direito do mapa
-      CafPropSpec('areaC', Vector2(955, 400), Vector2(130, 58), asset: 'objects/table_w.png'),
-
-      // Barricadas do código secreto (417) — em áreas exploráveis
-      CafPropSpec('secret1', Vector2(200, 520), Vector2(94, 44), asset: 'objects/table_e.png'),
-      CafPropSpec('secret2', Vector2(780, 620), Vector2(94, 44), asset: 'objects/table_e.png'),
-      CafPropSpec('secret3', Vector2(1000, 580), Vector2(94, 44), asset: 'objects/table_e.png'),
-
-      // Pontos de defesa ao redor do armazém de Marcos
-      CafPropSpec('defense', Vector2(700, 560), Vector2(60, 42)),
-      CafPropSpec('defense', Vector2(820, 590), Vector2(60, 42)),
-      CafPropSpec('defense', Vector2(940, 520), Vector2(60, 42)),
-    ];
-    for (final spec in specs) {
-      final safePos = _clampToMap(spec.position, spec.size);
-      final safeSpec = CafPropSpec(spec.kind, safePos, spec.size, asset: spec.asset);
-      final prop = CafeteriaProp(spec: safeSpec, game: this)..priority = 8;
-      _props.add(prop);
-      world.add(prop);
-    }
-
-    // Pickups posicionados no mapa
-    _addPickup('radioPart', Vector2(1020, 320));  // Área C — atrás da barricada
-    _addPickup('fuse',      Vector2(260, 180));   // Cozinha — perto das mesas superiores
-    _addPickup('fuse',      Vector2(900, 700));   // Armazém — perto de Marcos
-    _addPickup('radio',      Vector2(855, 660));  // Armazém — rádio
-    _addPickup('vitalBoost', Vector2(1090, 780)); // Sala secreta (código 417)
-
-    // Electrical panel — replaces the old 'radioPanel' CafeteriaPickup.
-    _panel = ElectricalPanelComponent(game: this)
-      ..position = _clampToMap(Vector2(810, 660), Vector2(80, 60))
-      ..priority = 8;
-    world.add(_panel!);
-
-    // Locker — replaces the old 'lockedRoom' CafeteriaProp.
-    // Uses armarioabertoefechado.png (left half = closed, right half = open).
-    // With Anchor.bottomCenter, Y=740 is the floor contact point (wall base).
-    // Seed priority to the Y-sort value to avoid a one-frame z-pop on spawn.
-    const lockerBaseY = 740.0;
-    _locker = LockerComponent(game: this)
-      ..position = Vector2(1075, lockerBaseY)
-      ..priority = lockerBaseY.ceil();
-    world.add(_locker!);
-  }
-
   // Display size per item kind (used for both visual sizing and boundary clamping).
   static Vector2 _pickupDisplaySize(String kind) => switch (kind) {
-    'fuse'      => Vector2(24, 24),   // small — lies on the floor
+    'fuse'      => Vector2(24, 24),
     'radioPart' => Vector2(20, 20),
     'radio'     => Vector2(32, 24),
     'vitalBoost'=> Vector2(26, 26),
+    'pecinha'   => Vector2(30, 32),
     _           => Vector2(36, 36),
   };
 
   // Floor items render under the player (priority 1); interactive props stay above (6).
   static bool _isFloorItem(String kind) =>
-      kind == 'fuse' || kind == 'radioPart' || kind == 'vitalBoost';
+      kind == 'fuse' || kind == 'radioPart' || kind == 'vitalBoost' || kind == 'pecinha';
 
   void _addPickup(String kind, Vector2 pos) {
     if (kind == 'vitalBoost' && vitalBoostCollected) return;
@@ -1188,8 +1378,8 @@ class CafeteriaZombieComponent extends SpriteAnimationComponent
     final prev = position.clone();
     position += delta;
     position = Vector2(
-      position.x.clamp(size.x / 2, CafeteriaGame._mapSize.x - size.x / 2).toDouble(),
-      position.y.clamp(size.y / 2, CafeteriaGame._mapSize.y - size.y / 2).toDouble(),
+      position.x.clamp(size.x / 2, game._mapSize.x - size.x / 2).toDouble(),
+      position.y.clamp(size.y / 2, game._mapSize.y - size.y / 2).toDouble(),
     );
     if (_hitsWall()) position = prev;
   }
