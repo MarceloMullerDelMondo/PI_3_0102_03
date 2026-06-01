@@ -56,16 +56,13 @@ class _ReitoriaLevelScreenState extends State<ReitoriaLevelScreen>
     Navigator.of(context).pop(true);
   }
 
-  Future<void> _setLandscape() {
-    return SystemChrome.setPreferredOrientations([
-      DeviceOrientation.landscapeLeft,
-      DeviceOrientation.landscapeRight,
-    ]);
-  }
+  Future<void> _setLandscape() => SystemChrome.setPreferredOrientations([
+        DeviceOrientation.landscapeLeft,
+        DeviceOrientation.landscapeRight,
+      ]);
 
-  Future<void> _setPortrait() {
-    return SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
-  }
+  Future<void> _setPortrait() =>
+      SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
 
   @override
   Widget build(BuildContext context) {
@@ -80,10 +77,25 @@ class _ReitoriaLevelScreenState extends State<ReitoriaLevelScreen>
               child: CircularProgressIndicator(color: Color(0xFFF5C842)),
             ),
             overlayBuilderMap: {
-              'MarianaDialog': (_, game) => MarianaDialogOverlay(game: game),
-              'FinalEnding': (_, game) => FinalEndingOverlay(game: game),
+              'BossIntroDialog': (_, game) => BossIntroDialogOverlay(game: game),
+              'BossVictory': (_, game) => BossVictoryOverlay(game: game),
             },
           ),
+          // ── Boss HP bar — completely independent layer, top-centre ────────────
+          ValueListenableBuilder<bool>(
+            valueListenable: _game.dialogOpen,
+            builder: (_, dialogOpen, __) {
+              if (dialogOpen) return const SizedBox.shrink();
+              return Align(
+                alignment: Alignment.topCenter,
+                child: Padding(
+                  padding: const EdgeInsets.only(top: 12),
+                  child: _BossHealthBar(game: _game),
+                ),
+              );
+            },
+          ),
+          // ── Player HUD — left panel, attack button, game-over ───────────────
           ValueListenableBuilder<bool>(
             valueListenable: _game.dialogOpen,
             builder: (_, dialogOpen, __) {
@@ -94,22 +106,8 @@ class _ReitoriaLevelScreenState extends State<ReitoriaLevelScreen>
                 missionText: _game.missionText,
                 hudMessage: _game.hudMessage,
                 onBack: () => Navigator.of(context).pop(false),
-                // Phase-specific: nightfall status badge below health bar.
-                extraTopLeft: _NightfallBadge(game: _game),
                 extraStack: [
-                  // Upload progress OR rescue countdown (centre of top bar).
-                  Positioned(
-                    left: 140,
-                    top: 10,
-                    right: 460,
-                    child: ValueListenableBuilder<ReitoriaRoute>(
-                      valueListenable: _game.route,
-                      builder: (_, route, __) => route == ReitoriaRoute.cure
-                          ? _UploadStatus(game: _game)
-                          : _CountdownStatus(game: _game),
-                    ),
-                  ),
-                  // Attack button (far right)
+                  // Attack button — bottom right
                   Positioned(
                     right: 24,
                     bottom: 20,
@@ -123,10 +121,8 @@ class _ReitoriaLevelScreenState extends State<ReitoriaLevelScreen>
                   Positioned.fill(
                     child: ValueListenableBuilder<bool>(
                       valueListenable: _game.gameOver,
-                      builder: (_, gameOver, __) {
-                        if (!gameOver) {
-                          return const IgnorePointer(child: SizedBox.expand());
-                        }
+                      builder: (_, over, __) {
+                        if (!over) return const IgnorePointer(child: SizedBox.expand());
                         return ColoredBox(
                           color: Colors.black.withValues(alpha: .84),
                           child: Center(
@@ -135,8 +131,14 @@ class _ReitoriaLevelScreenState extends State<ReitoriaLevelScreen>
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
                                   Text(
-                                    'FIM DA LINHA',
+                                    'DERROTA',
                                     style: _font(16, const Color(0xFFFF6666)),
+                                  ),
+                                  const SizedBox(height: 10),
+                                  Text(
+                                    'O Paciente Zero nao foi derrotado.',
+                                    textAlign: TextAlign.center,
+                                    style: _font(7, const Color(0xFFE5E7EB), height: 1.8),
                                   ),
                                   const SizedBox(height: 18),
                                   _PixelButton(
@@ -151,7 +153,7 @@ class _ReitoriaLevelScreenState extends State<ReitoriaLevelScreen>
                       },
                     ),
                   ),
-                  // Dev indicator
+                  // Dev badge
                   if (widget.devMode)
                     Positioned(
                       bottom: 24,
@@ -170,145 +172,118 @@ class _ReitoriaLevelScreenState extends State<ReitoriaLevelScreen>
   }
 }
 
-/// Injected into [BaseGameHud.extraTopLeft] for Phase 5.
-/// Reflects the nightfall / lighting state below the health bar.
-class _NightfallBadge extends StatelessWidget {
-  const _NightfallBadge({required this.game});
+// ─────────────────────────────────────────────────────────────────────────────
+// Boss Health Bar — brutalist, centred, occupies 58% of screen width
+// ─────────────────────────────────────────────────────────────────────────────
+class _BossHealthBar extends StatelessWidget {
+  const _BossHealthBar({required this.game});
 
   final ReitoriaLevel game;
 
   @override
   Widget build(BuildContext context) {
-    return ValueListenableBuilder<bool>(
-      valueListenable: game.nightfallActive,
-      builder: (_, night, __) => Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+    return FractionallySizedBox(
+      widthFactor: 0.58,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
         decoration: BoxDecoration(
-          color: const Color(0xE607070B),
-          border: Border.all(
-            color: night ? const Color(0xFF93C5FD) : const Color(0xFFF59E0B),
-            width: 1.5,
-          ),
+          color: const Color(0xF0100000),
+          border: Border.all(color: const Color(0xFFCC0000), width: 3),
+          boxShadow: const [
+            BoxShadow(color: Color(0xAAFF0000), blurRadius: 14, spreadRadius: 1),
+          ],
         ),
-        child: Text(
-          night ? 'NOITE: LANTERNA ATIVA' : 'LUZ: INSTAVEL',
-          style: _font(
-            7,
-            night ? const Color(0xFF93C5FD) : const Color(0xFFFDE68A),
-          ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              'PACIENTE ZERO',
+              style: _font(9, const Color(0xFFFF4444)),
+            ),
+            const SizedBox(height: 8),
+            ValueListenableBuilder<int>(
+              valueListenable: game.bossCurrentHealth,
+              builder: (_, hp, __) {
+                final fraction = (hp / FinalBossComponent.maxHp).clamp(0.0, 1.0);
+                return Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // Bar — LayoutBuilder gives explicit pixel width so the
+                    // fill Container never collapses to zero.
+                    LayoutBuilder(
+                      builder: (_, constraints) => Container(
+                        width: constraints.maxWidth,
+                        height: 20,
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF1A0000),
+                          border: Border.all(color: const Color(0xFF880000), width: 2),
+                        ),
+                        child: Align(
+                          alignment: Alignment.centerLeft,
+                          child: Container(
+                            width: constraints.maxWidth * fraction,
+                            height: 20,
+                            color: const Color(0xFFCC0000),
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 5),
+                    // HP numbers
+                    Text(
+                      '$hp  /  ${FinalBossComponent.maxHp}',
+                      style: _font(7, const Color(0xFFFF9999)),
+                    ),
+                  ],
+                );
+              },
+            ),
+          ],
         ),
       ),
     );
   }
 }
 
-class _UploadStatus extends StatelessWidget {
-  const _UploadStatus({required this.game});
+// ─────────────────────────────────────────────────────────────────────────────
+// Overlays
+// ─────────────────────────────────────────────────────────────────────────────
+class BossIntroDialogOverlay extends StatelessWidget {
+  const BossIntroDialogOverlay({super.key, required this.game});
 
   final ReitoriaLevel game;
 
   @override
   Widget build(BuildContext context) {
-    return _HudPanel(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          ValueListenableBuilder<double>(
-            valueListenable: game.uploadProgress,
-            builder: (_, progress, __) => Text(
-              'UPLOAD ${(progress * 100).clamp(0, 100).round()}%',
-              style: _font(8, const Color(0xFF67E8F9)),
-            ),
-          ),
-          const SizedBox(height: 8),
-          ValueListenableBuilder<double>(
-            valueListenable: game.uploadProgress,
-            builder: (_, progress, __) => _Bar(
-              value: progress,
-              color: const Color(0xFF22D3EE),
-            ),
-          ),
-          const SizedBox(height: 8),
-          ValueListenableBuilder<double>(
-            valueListenable: game.serverIntegrity,
-            builder: (_, integrity, __) => Text(
-              'SERVIDOR ${integrity.round()}%',
-              style: _font(7, integrity > 35 ? Colors.white : Colors.redAccent),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _CountdownStatus extends StatelessWidget {
-  const _CountdownStatus({required this.game});
-
-  final ReitoriaLevel game;
-
-  @override
-  Widget build(BuildContext context) {
-    return _HudPanel(
-      child: ValueListenableBuilder<int>(
-        valueListenable: game.countdownSeconds,
-        builder: (_, seconds, __) {
-          final m = (seconds ~/ 60).toString().padLeft(2, '0');
-          final s = (seconds % 60).toString().padLeft(2, '0');
-          return Text(
-            'RESGATE $m:$s',
-            style: _font(
-              10,
-              seconds <= 25 ? const Color(0xFFFF7777) : const Color(0xFFFDE68A),
-            ),
-          );
-        },
-      ),
-    );
-  }
-}
-
-class MarianaDialogOverlay extends StatelessWidget {
-  const MarianaDialogOverlay({super.key, required this.game});
-
-  final ReitoriaLevel game;
-
-  @override
-  Widget build(BuildContext context) {
-    final isCure = game.route.value == ReitoriaRoute.cure;
     return Material(
-      color: Colors.black.withValues(alpha: .88),
+      color: Colors.black.withValues(alpha: .9),
       child: Center(
         child: _DialogBox(
-          title: 'MARIANA',
-          body: isCure
-              ? 'Voce trouxe os dados da cura. Eu seguro a porta. Voce segura o servidor.'
-              : 'O resgate respondeu. O portao principal e nossa unica janela.',
-          actionLabel: 'COMEÇAR',
-          onTap: game.closeIntroDialog,
+          title: 'PACIENTE ZERO',
+          body:
+              'Este e o inicio do fim.\nO Paciente Zero criou a infeccao.\nDerrote-o e a cura estara a salvo.',
+          actionLabel: 'ENFRENTAR',
+          onTap: game.closeBossIntroDialog,
         ),
       ),
     );
   }
 }
 
-class FinalEndingOverlay extends StatelessWidget {
-  const FinalEndingOverlay({super.key, required this.game});
+class BossVictoryOverlay extends StatelessWidget {
+  const BossVictoryOverlay({super.key, required this.game});
 
   final ReitoriaLevel game;
 
   @override
   Widget build(BuildContext context) {
-    final isCure = game.route.value == ReitoriaRoute.cure;
     return Material(
       color: Colors.black.withValues(alpha: .93),
       child: Center(
         child: _DialogBox(
-          title: isCure ? 'ROTA CURA' : 'ROTA RESGATE',
-          body: isCure
-              ? 'A humanidade nao acabou... so precisava de alguem disposto a ficar.'
-              : 'Sobreviver tambem e resistir.',
+          title: 'VITORIA',
+          body:
+              'O Paciente Zero foi derrotado.\nA cura esta a salvo.\nO campus foi libertado.',
           actionLabel: 'ENCERRAR',
           onTap: game.finishFinale,
         ),
@@ -317,6 +292,9 @@ class FinalEndingOverlay extends StatelessWidget {
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Shared widgets
+// ─────────────────────────────────────────────────────────────────────────────
 class _DialogBox extends StatelessWidget {
   const _DialogBox({
     required this.title,
@@ -344,7 +322,8 @@ class _DialogBox extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Text(title, textAlign: TextAlign.center, style: _font(16, const Color(0xFFF5C842))),
+          Text(title,
+              textAlign: TextAlign.center, style: _font(16, const Color(0xFFF5C842))),
           const SizedBox(height: 18),
           Text(
             body,
@@ -354,30 +333,6 @@ class _DialogBox extends StatelessWidget {
           const SizedBox(height: 24),
           _PixelButton(label: actionLabel, onTap: onTap),
         ],
-      ),
-    );
-  }
-}
-
-class _Bar extends StatelessWidget {
-  const _Bar({required this.value, required this.color});
-
-  final double value;
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: 300,
-      height: 15,
-      decoration: BoxDecoration(
-        color: const Color(0xFF111827),
-        border: Border.all(color: const Color(0xFF4B5563), width: 1.5),
-      ),
-      alignment: Alignment.centerLeft,
-      child: FractionallySizedBox(
-        widthFactor: value.clamp(0, 1),
-        child: ColoredBox(color: color),
       ),
     );
   }
@@ -425,11 +380,8 @@ class _PixelButton extends StatelessWidget {
         child: Text(
           label,
           textAlign: TextAlign.center,
-          style: _font(
-            8,
-            enabled ? const Color(0xFFFDE68A) : const Color(0xFF9CA3AF),
-            height: 1.5,
-          ),
+          style: _font(8, enabled ? const Color(0xFFFDE68A) : const Color(0xFF9CA3AF),
+              height: 1.5),
         ),
       ),
     );
@@ -467,9 +419,7 @@ class _AttackButtonState extends State<_AttackButton> {
           height: 90,
           decoration: BoxDecoration(
             shape: BoxShape.circle,
-            color: widget.enabled
-                ? const Color(0xDD2A0505)
-                : const Color(0x884A4A4A),
+            color: widget.enabled ? const Color(0xDD2A0505) : const Color(0x884A4A4A),
             border: Border.all(
               color: widget.enabled ? Colors.redAccent : const Color(0xFF777777),
               width: 3.5,
@@ -478,10 +428,7 @@ class _AttackButtonState extends State<_AttackButton> {
           child: Center(
             child: Text(
               'ATK',
-              style: _font(
-                11,
-                widget.enabled ? Colors.redAccent : const Color(0xFFB0B0B0),
-              ),
+              style: _font(11, widget.enabled ? Colors.redAccent : const Color(0xFFB0B0B0)),
             ),
           ),
         ),

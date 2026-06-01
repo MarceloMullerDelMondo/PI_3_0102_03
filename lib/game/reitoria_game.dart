@@ -3,71 +3,56 @@ import 'dart:convert';
 import 'dart:math' as math;
 
 import 'package:flame/collisions.dart';
+import 'package:flutter/services.dart' show rootBundle;
 import 'package:flame/components.dart';
 import 'package:flame/experimental.dart' show Rectangle;
 import 'package:flame/game.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
 import '../services/firebase_service.dart';
 import 'h15_game.dart' show InvisibleWall, PlayerComponent, SolidObstacle;
 
-enum ReitoriaRoute { cure, rescue }
-
+// ─────────────────────────────────────────────────────────────────────────────
+// ReitoriaLevel — Boss Fight: Paciente Zero
+// ─────────────────────────────────────────────────────────────────────────────
 class ReitoriaLevel extends FlameGame with HasCollisionDetection {
   ReitoriaLevel({required this.playerName});
 
   final String playerName;
 
-  static final Vector2 _fallbackMapSize = Vector2(1600, 900);
-  static final Vector2 _fallbackSpawn = Vector2(300, 710);
-  static final Vector2 _fallbackMariana = Vector2(780, 465);
-  static final Vector2 _fallbackServer = Vector2(820, 440);
-  static final Vector2 _fallbackGate = Vector2(1420, 690);
+  static final Vector2 _fallbackMapSize = Vector2(1402, 1122);
+  static final Vector2 _playerSpawn = Vector2(701, 1020);
+  static final Vector2 _bossSpawn = Vector2(701, 561);
   static final Vector2 _playerSize = Vector2(58, 58);
-  static const double _uploadDuration = 120;
-  static const double _survivalDuration = 120;
-  static const double _nightfallUploadAt = .82;
-  static const double _nightfallTimerAt = 25;
+  static const double _minionSpawnInterval = 3.0;
 
   PlayerComponent? player;
   JoystickComponent? _joystick;
-  SpriteComponent? _background;
-  ReitoriaMarianaComponent? mariana;
-  ReitoriaServerComponent? server;
-  ReitoriaGateComponent? gate;
-  ReitoriaDarknessOverlay? _darkness;
+  FinalBossComponent? boss;
 
   Vector2 _mapSize = _fallbackMapSize.clone();
-  Vector2 _serverPosition = _fallbackServer.clone();
-  Vector2 _gatePosition = _fallbackGate.clone();
   final List<SolidObstacle> _walls = [];
   final List<ReitoriaZombieComponent> _zombies = [];
   final math.Random _rng = math.Random();
 
+  // HUD state
   final ValueNotifier<double> currentHealth = ValueNotifier(100);
   final ValueNotifier<double> maxHealth = ValueNotifier(100);
-  final ValueNotifier<double> uploadProgress = ValueNotifier(0);
-  final ValueNotifier<double> serverIntegrity = ValueNotifier(100);
-  final ValueNotifier<int> countdownSeconds = ValueNotifier(_survivalDuration.toInt());
-  final ValueNotifier<String> missionText =
-      ValueNotifier('Missao final: encontre Mariana na Reitoria.');
+  final ValueNotifier<int> bossCurrentHealth = ValueNotifier(FinalBossComponent.maxHp);
+  final ValueNotifier<int> bossMaxHealth = ValueNotifier(FinalBossComponent.maxHp);
+  final ValueNotifier<String> missionText = ValueNotifier('Missao final: derrote o Paciente Zero!');
   final ValueNotifier<String?> hudMessage = ValueNotifier(null);
   final ValueNotifier<bool> dialogOpen = ValueNotifier(false);
   final ValueNotifier<bool> attackEnabled = ValueNotifier(true);
-  final ValueNotifier<bool> nightfallActive = ValueNotifier(false);
   final ValueNotifier<bool> gameOver = ValueNotifier(false);
   final ValueNotifier<bool> levelCompleted = ValueNotifier(false);
-  final ValueNotifier<ReitoriaRoute> route =
-      ValueNotifier(ReitoriaRoute.rescue);
 
-  bool _introShown = false;
-  bool _objectiveStarted = false;
+  bool isBossDead = false;
   bool _endingOpen = false;
-  double _uploadElapsed = 0;
-  double _countdownLeft = _survivalDuration;
   double _spawnTimer = 0;
-  int _wave = 0;
+
+  @override
+  bool get debugMode => false;
 
   @override
   Color backgroundColor() => Colors.black;
@@ -77,153 +62,113 @@ class ReitoriaLevel extends FlameGame with HasCollisionDetection {
     await super.onLoad();
 
     camera.viewfinder.anchor = Anchor.center;
-    camera.viewfinder.position = _fallbackSpawn.clone();
+    camera.viewfinder.position = _playerSpawn.clone();
 
-    route.value = await _loadRoute();
-    final rawMap = await _loadOptionalMap();
-    await _loadBackground(rawMap);
-    _loadCollisions(rawMap);
+    await _loadBackground();
+    await _loadTiledCollisions();
 
     final playerImage = await images.load('player/player_sprite.jpg');
-    final playerComponent = PlayerComponent.fromSpriteSheet(playerImage)
-      ..position = _readObjectPosition(rawMap, ['spawn', 'player']) ??
-          _clampToMap(_fallbackSpawn, _playerSize)
+    final playerComp = PlayerComponent.fromSpriteSheet(playerImage)
+      ..position = _playerSpawn.clone()
       ..size = _playerSize
       ..priority = 8;
-    player = playerComponent;
-    await world.add(playerComponent);
+    player = playerComp;
+    await world.add(playerComp);
 
-    _serverPosition =
-        _readObjectPosition(rawMap, ['server', 'servidor']) ?? _fallbackServer;
-    _gatePosition =
-        _readObjectPosition(rawMap, ['gate', 'portao', 'saida']) ?? _fallbackGate;
-    final marianaPosition =
-        _readObjectPosition(rawMap, ['mariana', 'npc']) ?? _fallbackMariana;
-
-    server = ReitoriaServerComponent(position: _serverPosition)..priority = 5;
-    gate = ReitoriaGateComponent(position: _gatePosition)..priority = 5;
-    mariana = ReitoriaMarianaComponent(position: marianaPosition)..priority = 7;
-    await world.add(server!);
-    await world.add(gate!);
-    await world.add(mariana!);
+    final bossComp = FinalBossComponent(game: this)
+      ..position = _bossSpawn.clone()
+      ..priority = 7;
+    boss = bossComp;
+    await world.add(bossComp);
 
     final minZoom = math.max(size.x / _mapSize.x, size.y / _mapSize.y);
     camera.viewfinder.zoom = math.max(minZoom, 1.25);
     camera.setBounds(Rectangle.fromLTWH(0, 0, _mapSize.x, _mapSize.y));
-    camera.follow(playerComponent, snap: true);
+    camera.follow(playerComp, snap: true);
 
     _setupJoystick();
     _restoreWeapon();
 
-    async.Timer(const Duration(milliseconds: 650), () {
-      if (!isMounted || _introShown) return;
-      _openIntroDialog();
+    async.Timer(const Duration(milliseconds: 600), () {
+      if (!isMounted) return;
+      dialogOpen.value = true;
+      pauseEngine();
+      overlays.add('BossIntroDialog');
     });
   }
 
-  Future<ReitoriaRoute> _loadRoute() async {
-    final saved = (await FirebaseService.instance.loadCaaFinalChoice()) ?? '';
-    final normalized = saved.toLowerCase();
-    if (normalized.contains('cure') ||
-        normalized.contains('cura') ||
-        normalized.contains('data') ||
-        normalized.contains('dados')) {
-      return ReitoriaRoute.cure;
-    }
-    return ReitoriaRoute.rescue;
-  }
-
-  Future<Map<String, dynamic>> _loadOptionalMap() async {
-    for (final asset in const [
-      'assets/tiles/reitoria_map.json',
-      'assets/tiles/reitoria.json',
-    ]) {
-      try {
-        final raw = await rootBundle.loadString(asset);
-        final map = jsonDecode(raw) as Map<String, dynamic>;
-        _mapSize = _readMapSize(map);
-        return map;
-      } catch (_) {}
-    }
-    return const {};
-  }
-
-  Future<void> _loadBackground(Map<String, dynamic> map) async {
+  Future<void> _loadBackground() async {
     try {
       final image = await images.load('screens/reitoria_screen.jpeg');
-      if (map.isEmpty) _mapSize = Vector2(image.width.toDouble(), image.height.toDouble());
-      _background = SpriteComponent(
+      _mapSize = Vector2(image.width.toDouble(), image.height.toDouble());
+      world.add(SpriteComponent(
         sprite: Sprite(image),
         size: _mapSize,
         position: Vector2.zero(),
         priority: -10,
-      );
-      world.add(_background!);
+      ));
     } catch (e) {
-      debugPrint('Reitoria background failed: $e');
+      debugPrint('Reitoria background: $e');
       world.add(ReitoriaFallbackMap(size: _mapSize)..priority = -10);
     }
   }
 
-  Vector2 _readMapSize(Map<String, dynamic> map) {
-    for (final layer in _layers(map)) {
-      final w = (layer['imagewidth'] as num?)?.toDouble();
-      final h = (layer['imageheight'] as num?)?.toDouble();
-      if (w != null && h != null) return Vector2(w, h);
-    }
-    final width = (map['width'] as num? ?? 0).toDouble();
-    final height = (map['height'] as num? ?? 0).toDouble();
-    final tileW = (map['tilewidth'] as num? ?? 16).toDouble();
-    final tileH = (map['tileheight'] as num? ?? 16).toDouble();
-    if (width > 0 && height > 0) return Vector2(width * tileW, height * tileH);
-    return _fallbackMapSize.clone();
-  }
+  // Loads collision rectangles from reitoria_collisions.json.
+  // The Tiled image layer has offsetx = -403.03 and offsety = 266.667, so
+  // every object coordinate must be shifted to align with the game background
+  // rendered at (0, 0): game_x = tiled_x + 403.03, game_y = tiled_y - 266.667.
+  Future<void> _loadTiledCollisions() async {
+    const double imgOffsetX = 403.03;
+    const double imgOffsetY = 266.667;
+    try {
+      final raw = await rootBundle.loadString('assets/tiles/reitoria_collisions.json');
+      final map = jsonDecode(raw) as Map<String, dynamic>;
+      final layers = (map['layers'] as List<dynamic>).whereType<Map<String, dynamic>>();
 
-  void _loadCollisions(Map<String, dynamic> map) {
-    final objects = _objects(_objectLayer(map, 'Colisoes'));
-    for (final obj in objects) {
-      final wall = _wallFromObject(obj);
-      if (wall == null) continue;
-      _walls.add(wall);
-      world.add(wall);
+      for (final layer in layers) {
+        if (layer['name'] != 'Colisoes') continue;
+        final objects =
+            (layer['objects'] as List<dynamic>? ?? []).whereType<Map<String, dynamic>>();
+        for (final obj in objects) {
+          final w = (obj['width'] as num).toDouble();
+          final h = (obj['height'] as num).toDouble();
+          if (w <= 0 || h <= 0) continue;
+          final x = (obj['x'] as num).toDouble() + imgOffsetX;
+          final y = (obj['y'] as num).toDouble() - imgOffsetY;
+          final wall = InvisibleWall(
+            position: Vector2(x, y),
+            size: Vector2(w, h),
+            showDebug: false,
+          )..priority = 1;
+          _walls.add(wall);
+          world.add(wall);
+        }
+        break;
+      }
+    } catch (e) {
+      debugPrint('Reitoria collisions failed — falling back to border walls: $e');
+      _addBorderWalls();
     }
-    _addBorderWalls();
-  }
-
-  SolidObstacle? _wallFromObject(Map<String, dynamic> obj) {
-    final x = (obj['x'] as num? ?? 0).toDouble();
-    final y = (obj['y'] as num? ?? 0).toDouble();
-    final w = (obj['width'] as num? ?? 0).toDouble();
-    final h = (obj['height'] as num? ?? 0).toDouble();
-    if (w <= 0 || h <= 0) return null;
-    return InvisibleWall(position: Vector2(x, y), size: Vector2(w, h));
   }
 
   void _addBorderWalls() {
     const t = 10.0;
-    final specs = [
+    for (final s in [
       (Vector2.zero(), Vector2(_mapSize.x, t)),
       (Vector2(0, _mapSize.y - t), Vector2(_mapSize.x, t)),
       (Vector2.zero(), Vector2(t, _mapSize.y)),
       (Vector2(_mapSize.x - t, 0), Vector2(t, _mapSize.y)),
-    ];
-    for (final spec in specs) {
-      final wall = InvisibleWall(position: spec.$1, size: spec.$2)..priority = 1;
-      _walls.add(wall);
-      world.add(wall);
+    ]) {
+      final w = InvisibleWall(position: s.$1, size: s.$2, showDebug: false)..priority = 1;
+      _walls.add(w);
+      world.add(w);
     }
   }
 
   void _setupJoystick() {
     _joystick = JoystickComponent(
-      knob: CircleComponent(
-        radius: 26,
-        paint: Paint()..color = const Color(0xFFF5C842),
-      ),
-      background: CircleComponent(
-        radius: 68,
-        paint: Paint()..color = const Color(0xAAE5E7EB),
-      ),
+      knob: CircleComponent(radius: 26, paint: Paint()..color = const Color(0xFFF5C842)),
+      background: CircleComponent(radius: 68, paint: Paint()..color = const Color(0xAAE5E7EB)),
       margin: const EdgeInsets.only(left: 28, bottom: 28),
       priority: 1001,
     );
@@ -238,36 +183,15 @@ class ReitoriaLevel extends FlameGame with HasCollisionDetection {
           : 'player/player_espada1mao.png';
       try {
         player?.useWeaponSpriteSheet(await images.load(asset));
-      } catch (e) {
-        debugPrint('Reitoria weapon sprite failed: $e');
-      }
+      } catch (_) {}
     }).catchError((_) {});
   }
 
-  void _openIntroDialog() {
-    _introShown = true;
-    dialogOpen.value = true;
-    pauseEngine();
-    overlays.add('MarianaDialog');
-  }
-
-  void closeIntroDialog() {
-    overlays.remove('MarianaDialog');
+  void closeBossIntroDialog() {
+    overlays.remove('BossIntroDialog');
     dialogOpen.value = false;
     resumeEngine();
-    _startObjective();
-  }
-
-  void _startObjective() {
-    if (_objectiveStarted) return;
-    _objectiveStarted = true;
-    if (route.value == ReitoriaRoute.cure) {
-      missionText.value = 'Rota Cura: defenda o servidor ate o upload chegar a 100%.';
-      showHudMessage('Upload iniciado. Proteja o servidor.');
-    } else {
-      missionText.value = 'Rota Resgate: sobreviva ate o helicoptero chegar ao portao.';
-      showHudMessage('Sinal recebido. Aguente ate o resgate.');
-    }
+    showHudMessage('Elimine o Paciente Zero!');
   }
 
   @override
@@ -281,89 +205,31 @@ class ReitoriaLevel extends FlameGame with HasCollisionDetection {
 
     p.move(j.relativeDelta, dt, _mapSize, _walls);
     _removeDeadZombies();
-    if (!_objectiveStarted) return;
 
-    if (route.value == ReitoriaRoute.cure) {
-      _updateCureRoute(dt);
-    } else {
-      _updateRescueRoute(dt);
-    }
-    _checkNightfall();
-  }
-
-  void _updateCureRoute(double dt) {
-    _uploadElapsed = (_uploadElapsed + dt).clamp(0, _uploadDuration);
-    uploadProgress.value = _uploadElapsed / _uploadDuration;
-    _spawnTimer -= dt;
-    if (_spawnTimer <= 0) {
-      _spawnTimer = nightfallActive.value ? .9 : 1.45;
-      _spawnZombie(target: _serverPosition, nearServer: true);
-    }
-    if (uploadProgress.value >= 1) {
-      _openEnding();
-    }
-  }
-
-  void _updateRescueRoute(double dt) {
-    _countdownLeft = math.max(0, _countdownLeft - dt);
-    countdownSeconds.value = _countdownLeft.ceil();
-    _spawnTimer -= dt;
-    if (_spawnTimer <= 0) {
-      _wave++;
-      _spawnTimer = nightfallActive.value ? 4.0 : 6.5;
-      final count = nightfallActive.value ? 5 : (3 + (_wave ~/ 2).clamp(0, 3));
-      for (var i = 0; i < count; i++) {
-        _spawnZombie(target: _gatePosition, nearServer: false);
+    if (!isBossDead) {
+      _spawnTimer -= dt;
+      if (_spawnTimer <= 0) {
+        _spawnTimer = _minionSpawnInterval;
+        _spawnMinionNearBoss();
       }
     }
-    if (_countdownLeft <= 0) {
-      _openEnding();
-    }
   }
 
-  void _checkNightfall() {
-    final shouldActivate = route.value == ReitoriaRoute.cure
-        ? uploadProgress.value >= _nightfallUploadAt
-        : _countdownLeft <= _nightfallTimerAt;
-    if (!shouldActivate || nightfallActive.value) return;
-    nightfallActive.value = true;
-    _darkness = ReitoriaDarknessOverlay(game: this, radius: 185)..priority = 1000;
-    camera.viewport.add(_darkness!);
-    showHudMessage('Anoiteceu. A lanterna e tudo que resta.');
-  }
-
-  void _spawnZombie({required Vector2 target, required bool nearServer}) {
+  void _spawnMinionNearBoss() {
+    final b = boss;
     final p = player;
-    if (p == null) return;
-    final spawn = nearServer ? _spawnAroundServer() : _spawnNearGateWave();
-    final zombie = ReitoriaZombieComponent(
-      game: this,
-      player: p,
-      objective: target,
-      position: spawn,
-      route: route.value,
-    )..priority = 6;
+    if (b == null || b.isRemoved || p == null) return;
+
+    final angle = _rng.nextDouble() * math.pi * 2;
+    final radius = 120 + _rng.nextDouble() * 80;
+    final spawn = Vector2(
+      (b.position.x + math.cos(angle) * radius).clamp(80, _mapSize.x - 80).toDouble(),
+      (b.position.y + math.sin(angle) * radius).clamp(80, _mapSize.y - 80).toDouble(),
+    );
+
+    final zombie = ReitoriaZombieComponent(game: this, player: p, position: spawn)..priority = 6;
     _zombies.add(zombie);
     world.add(zombie);
-  }
-
-  Vector2 _spawnAroundServer() {
-    final angle = _rng.nextDouble() * math.pi * 2;
-    final radius = 340 + _rng.nextDouble() * 220;
-    return _clampToMap(
-      _serverPosition + Vector2(math.cos(angle), math.sin(angle)) * radius,
-      ReitoriaZombieComponent.visualSize,
-    );
-  }
-
-  Vector2 _spawnNearGateWave() {
-    final x = (_gatePosition.x - 280 + _rng.nextDouble() * 420)
-        .clamp(80, _mapSize.x - 80)
-        .toDouble();
-    final y = (_gatePosition.y - 230 + _rng.nextDouble() * 300)
-        .clamp(80, _mapSize.y - 80)
-        .toDouble();
-    return Vector2(x, y);
   }
 
   void _removeDeadZombies() {
@@ -376,10 +242,14 @@ class ReitoriaLevel extends FlameGame with HasCollisionDetection {
     if (p == null) return;
     p.startAttack();
     final rect = p.weaponAttackRect(null);
-    for (final zombie in List<ReitoriaZombieComponent>.of(_zombies)) {
-      if (zombie.isAlive && rect.overlaps(zombie.hitRect)) {
-        zombie.takeDamage(10);
-      }
+
+    for (final z in List<ReitoriaZombieComponent>.of(_zombies)) {
+      if (z.isAlive && rect.overlaps(z.hitRect)) z.takeDamage(10);
+    }
+
+    final b = boss;
+    if (b != null && !b.isRemoved && b.isAlive && rect.overlaps(b.hitRect)) {
+      b.takeDamage(15);
     }
   }
 
@@ -388,62 +258,62 @@ class ReitoriaLevel extends FlameGame with HasCollisionDetection {
     currentHealth.value = math.max(0, currentHealth.value - amount);
     if (currentHealth.value <= 0) {
       gameOver.value = true;
-      missionText.value = 'Voce caiu antes do fim.';
+      missionText.value = 'Voce foi derrotado pelo Paciente Zero.';
     }
   }
 
-  void damageServer(double amount) {
-    if (route.value != ReitoriaRoute.cure || gameOver.value) return;
-    serverIntegrity.value = math.max(0, serverIntegrity.value - amount);
-    if (serverIntegrity.value <= 0) {
-      gameOver.value = true;
-      missionText.value = 'O servidor foi destruido.';
-    }
-  }
-
-  void _openEnding() {
+  void onBossDefeated() {
     if (_endingOpen) return;
+    isBossDead = true;
     _endingOpen = true;
-    for (final zombie in List<ReitoriaZombieComponent>.of(_zombies)) {
-      zombie.removeFromParent();
+    bossCurrentHealth.value = 0;
+
+    for (final z in List<ReitoriaZombieComponent>.of(_zombies)) {
+      z.removeFromParent();
     }
     _zombies.clear();
-    pauseEngine();
-    dialogOpen.value = true;
-    overlays.add('FinalEnding');
+
+    async.Timer(const Duration(milliseconds: 1200), () {
+      if (!isMounted) return;
+      pauseEngine();
+      dialogOpen.value = true;
+      overlays.add('BossVictory');
+    });
   }
 
   Future<void> finishFinale() async {
     if (levelCompleted.value) return;
-    await FirebaseService.instance.completeArea5(
-      playerName,
-      ending: route.value == ReitoriaRoute.cure ? 'cure' : 'rescue',
-    );
-    overlays.remove('FinalEnding');
+    try {
+      await FirebaseService.instance.completeArea5(playerName, ending: 'boss_defeated');
+    } catch (_) {}
+    overlays.remove('BossVictory');
     dialogOpen.value = false;
     levelCompleted.value = true;
   }
 
   void reviveAtCheckpoint() {
-    for (final zombie in List<ReitoriaZombieComponent>.of(_zombies)) {
-      zombie.removeFromParent();
+    for (final z in List<ReitoriaZombieComponent>.of(_zombies)) {
+      z.removeFromParent();
     }
     _zombies.clear();
     currentHealth.value = maxHealth.value;
-    serverIntegrity.value = 100;
-    uploadProgress.value = 0;
-    _uploadElapsed = 0;
-    _countdownLeft = _survivalDuration;
-    countdownSeconds.value = _survivalDuration.toInt();
     _spawnTimer = 0;
-    _wave = 0;
-    nightfallActive.value = false;
-    _darkness?.removeFromParent();
-    _darkness = null;
+    isBossDead = false;
+    _endingOpen = false;
     gameOver.value = false;
-    player?.position = _fallbackSpawn.clone();
-    _objectiveStarted = false;
-    _startObjective();
+    player?.position = _playerSpawn.clone();
+
+    if (boss == null || boss!.isRemoved) {
+      final b = FinalBossComponent(game: this)
+        ..position = _bossSpawn.clone()
+        ..priority = 7;
+      boss = b;
+      world.add(b);
+    } else {
+      boss!.resetHealth();
+    }
+    bossCurrentHealth.value = FinalBossComponent.maxHp;
+    missionText.value = 'Missao final: derrote o Paciente Zero!';
   }
 
   void showHudMessage(String message) {
@@ -452,168 +322,133 @@ class ReitoriaLevel extends FlameGame with HasCollisionDetection {
       if (hudMessage.value == message) hudMessage.value = null;
     });
   }
-
-  Vector2 _clampToMap(Vector2 center, Vector2 componentSize) => Vector2(
-        center.x
-            .clamp(componentSize.x / 2, _mapSize.x - componentSize.x / 2)
-            .toDouble(),
-        center.y
-            .clamp(componentSize.y / 2, _mapSize.y - componentSize.y / 2)
-            .toDouble(),
-      );
-
-  Vector2? _readObjectPosition(Map<String, dynamic> map, List<String> names) {
-    final obj = _findObjectByName(map, (name) {
-      final lower = name.toLowerCase();
-      return names.any(lower.contains);
-    });
-    if (obj == null) return null;
-    return _clampToMap(
-      Vector2(
-        (obj['x'] as num? ?? 0).toDouble(),
-        (obj['y'] as num? ?? 0).toDouble(),
-      ),
-      Vector2(64, 64),
-    );
-  }
-
-  List<Map<String, dynamic>> _layers(Map<String, dynamic> map) =>
-      (map['layers'] as List<dynamic>? ?? const [])
-          .whereType<Map<String, dynamic>>()
-          .toList();
-
-  Map<String, dynamic>? _objectLayer(Map<String, dynamic> map, String name) {
-    for (final layer in _layers(map)) {
-      if ((layer['name'] as String? ?? '') == name) return layer;
-    }
-    return null;
-  }
-
-  List<Map<String, dynamic>> _objects(Map<String, dynamic>? layer) =>
-      (layer?['objects'] as List<dynamic>? ?? const [])
-          .whereType<Map<String, dynamic>>()
-          .toList();
-
-  Map<String, dynamic>? _findObjectByName(
-    Map<String, dynamic> map,
-    bool Function(String name) test,
-  ) {
-    for (final layer in _layers(map)) {
-      for (final obj in _objects(layer)) {
-        final name = obj['name']?.toString() ?? '';
-        if (test(name)) return obj;
-      }
-    }
-    return null;
-  }
 }
 
-class ReitoriaMarianaComponent extends SpriteComponent {
-  ReitoriaMarianaComponent({required super.position})
-      : super(size: Vector2(72, 104), anchor: Anchor.center);
+// ─────────────────────────────────────────────────────────────────────────────
+// FinalBossComponent — Paciente Zero
+// ─────────────────────────────────────────────────────────────────────────────
+class FinalBossComponent extends SpriteComponent {
+  static const int maxHp = 500;
+  static const double _speed = 38;
+  static const double _touchDamage = 15;
+  static const double _touchCooldown = 1.5;
+
+  // Size is derived from the sprite frame in onLoad to avoid any squish/clip.
+  FinalBossComponent({required this.game}) : super(anchor: Anchor.center);
+
+  final ReitoriaLevel game;
+  int health = maxHp;
+  double _hitCooldown = 0;
+  double _flash = 0;
+
+  bool get isAlive => health > 0;
+
+  Rect get hitRect => Rect.fromCenter(
+        center: Offset(position.x, position.y),
+        width: size.x * .65,
+        height: size.y * .65,
+      );
 
   @override
   Future<void> onLoad() async {
     await super.onLoad();
-    final game = findGame() as ReitoriaLevel;
     try {
-      sprite = Sprite(await game.images.load('npcs/npc1beatriz.png'));
+      final img = await game.images.load('zumbis/final_boss.png');
+      // Static first frame only — avoids all fractional-pixel bleeding issues.
+      sprite = Sprite(
+        img,
+        srcPosition: Vector2(0, 0),
+        srcSize: Vector2(125, 139),
+      );
+      size = Vector2(125 * 1.3, 139 * 1.3);
     } catch (e) {
-      debugPrint('Mariana sprite failed: $e');
+      debugPrint('FinalBoss sprite failed: $e');
+      size = Vector2(125 * 1.3, 139 * 1.3); // fallback keeps hitRect non-zero
+    }
+    add(RectangleHitbox(collisionType: CollisionType.passive));
+  }
+
+  void takeDamage(int amount) {
+    if (!isAlive) return;
+    health = (health - amount).clamp(0, maxHp);
+    _flash = 0.2;
+    game.bossCurrentHealth.value = health;
+    if (health <= 0) {
+      removeFromParent();
+      game.onBossDefeated();
+    }
+  }
+
+  void resetHealth() {
+    health = maxHp;
+    _hitCooldown = 0;
+    _flash = 0;
+  }
+
+  @override
+  void update(double dt) {
+    super.update(dt);
+    if (!isAlive) return;
+    if (_hitCooldown > 0) _hitCooldown -= dt;
+    if (_flash > 0) _flash -= dt;
+
+    final p = game.player;
+    if (p == null) return;
+
+    final dir = p.position - position;
+    if (dir.length2 > 1) {
+      position += dir.normalized() * _speed * dt;
+      position = Vector2(
+        position.x.clamp(size.x / 2, game._mapSize.x - size.x / 2).toDouble(),
+        position.y.clamp(size.y / 2, game._mapSize.y - size.y / 2).toDouble(),
+      );
+    }
+
+    if (_hitCooldown > 0) return;
+    if (hitRect.overlaps(p.feetRect.inflate(20))) {
+      _hitCooldown = _touchCooldown;
+      game.damagePlayer(_touchDamage);
     }
   }
 
   @override
   void render(Canvas canvas) {
+    // Shadow
     canvas.drawOval(
       Rect.fromCenter(
-        center: Offset(size.x / 2, size.y + 3),
-        width: size.x * .75,
-        height: 8,
+        center: Offset(size.x / 2, size.y + 5),
+        width: size.x * .85,
+        height: 12,
       ),
-      Paint()..color = Colors.black.withValues(alpha: .35),
+      Paint()..color = Colors.black.withValues(alpha: .4),
     );
-    if (sprite != null) {
-      super.render(canvas);
-    } else {
-      canvas.drawCircle(
-        Offset(size.x / 2, size.y * .34),
-        18,
-        Paint()..color = const Color(0xFFC49A6C),
-      );
-      canvas.drawRect(
-        Rect.fromLTWH(size.x * .25, size.y * .48, size.x * .5, size.y * .38),
-        Paint()..color = const Color(0xFF5B21B6),
-      );
+    super.render(canvas);
+    // Hit flash
+    if (_flash > 0) {
+      canvas.drawRect(size.toRect(), Paint()..color = Colors.red.withValues(alpha: .5));
     }
   }
 }
 
-class ReitoriaServerComponent extends PositionComponent {
-  ReitoriaServerComponent({required super.position})
-      : super(size: Vector2(92, 78), anchor: Anchor.center);
-
-  @override
-  void render(Canvas canvas) {
-    final rect = size.toRect();
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(rect, const Radius.circular(4)),
-      Paint()..color = const Color(0xFF111827),
-    );
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(rect.deflate(5), const Radius.circular(3)),
-      Paint()
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 2
-        ..color = const Color(0xFF22D3EE),
-    );
-    for (var i = 0; i < 4; i++) {
-      canvas.drawCircle(
-        Offset(18 + i * 18, size.y * .52),
-        4,
-        Paint()..color = i.isEven ? const Color(0xFF22C55E) : const Color(0xFFFACC15),
-      );
-    }
-  }
-}
-
-class ReitoriaGateComponent extends PositionComponent {
-  ReitoriaGateComponent({required super.position})
-      : super(size: Vector2(104, 74), anchor: Anchor.center);
-
-  @override
-  void render(Canvas canvas) {
-    canvas.drawRect(size.toRect(), Paint()..color = const Color(0xAA0F172A));
-    canvas.drawRect(
-      size.toRect().deflate(5),
-      Paint()
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 3
-        ..color = const Color(0xFFF5C842),
-    );
-  }
-}
-
-class ReitoriaZombieComponent extends SpriteComponent {
-  ReitoriaZombieComponent({
-    required this.game,
-    required this.player,
-    required this.objective,
-    required this.route,
-    required Vector2 position,
-  }) : super(position: position, size: visualSize.clone(), anchor: Anchor.center);
-
+// ─────────────────────────────────────────────────────────────────────────────
+// ReitoriaZombieComponent — minion lackey spawned around the boss
+// ─────────────────────────────────────────────────────────────────────────────
+class ReitoriaZombieComponent extends SpriteAnimationComponent {
   static final Vector2 visualSize = Vector2(62, 62);
   static const double _speed = 68;
   static const double _touchDamage = 7;
-  static const double _serverDamage = 5;
+  static const double _cooldownDuration = 1.0;
+
+  ReitoriaZombieComponent({
+    required this.game,
+    required this.player,
+    required Vector2 position,
+  }) : super(position: position, size: visualSize.clone(), anchor: Anchor.center);
 
   final ReitoriaLevel game;
   final PlayerComponent player;
-  final Vector2 objective;
-  final ReitoriaRoute route;
   int health = 22;
-  double _hitCooldown = 0;
+  double _cooldown = 0;
   double _flash = 0;
   bool get isAlive => health > 0;
 
@@ -627,17 +462,29 @@ class ReitoriaZombieComponent extends SpriteComponent {
   Future<void> onLoad() async {
     await super.onLoad();
     try {
-      sprite = Sprite(await game.images.load('zumbis/zumbi_normal.png'));
-    } catch (e) {
-      debugPrint('Reitoria zombie sprite failed: $e');
-    }
+      final img = await game.images.load('zumbis/zumbi_normal.png');
+      // zumbi_normal.png: 592×421 — 4 cols × 3 rows
+      const int cols = 4;
+      const int rows = 3;
+      const int amount = 4; // row 2: 4 frames side-walk
+      final frameH = (421 / rows).floorToDouble(); // 140 px (floor evita sangramento)
+      animation = SpriteAnimation.fromFrameData(
+        img,
+        SpriteAnimationData.sequenced(
+          amount: amount,
+          stepTime: 0.15,
+          textureSize: Vector2(592 / cols, frameH),
+          texturePosition: Vector2(0, 2 * frameH), // row 2
+        ),
+      );
+    } catch (_) {}
     add(RectangleHitbox(collisionType: CollisionType.passive));
   }
 
   void takeDamage(int amount) {
     if (!isAlive) return;
     health -= amount;
-    _flash = .18;
+    _flash = 0.18;
     if (health <= 0) removeFromParent();
   }
 
@@ -645,32 +492,22 @@ class ReitoriaZombieComponent extends SpriteComponent {
   void update(double dt) {
     super.update(dt);
     if (!isAlive) return;
-    if (_hitCooldown > 0) _hitCooldown -= dt;
+    if (_cooldown > 0) _cooldown -= dt;
     if (_flash > 0) _flash -= dt;
 
-    final playerClose = (player.position - position).length <= 160;
-    final target = playerClose ? player.position : objective;
-    var dir = target - position;
+    final dir = player.position - position;
     if (dir.length2 > 4) {
-      dir = dir.normalized();
-      final boost = game.nightfallActive.value ? 1.22 : 1.0;
-      position += dir * _speed * boost * dt;
+      position += dir.normalized() * _speed * dt;
       position = Vector2(
         position.x.clamp(size.x / 2, game._mapSize.x - size.x / 2).toDouble(),
         position.y.clamp(size.y / 2, game._mapSize.y - size.y / 2).toDouble(),
       );
     }
 
-    if (_hitCooldown > 0) return;
+    if (_cooldown > 0) return;
     if (hitRect.overlaps(player.feetRect.inflate(16))) {
-      _hitCooldown = 1.0;
+      _cooldown = _cooldownDuration;
       game.damagePlayer(_touchDamage);
-      return;
-    }
-    if (route == ReitoriaRoute.cure &&
-        (position - objective).length <= 56) {
-      _hitCooldown = 1.2;
-      game.damageServer(_serverDamage);
     }
   }
 
@@ -684,7 +521,7 @@ class ReitoriaZombieComponent extends SpriteComponent {
       ),
       Paint()..color = Colors.black.withValues(alpha: .35),
     );
-    if (sprite != null) {
+    if (animation != null) {
       super.render(canvas);
     } else {
       canvas.drawCircle(
@@ -694,61 +531,22 @@ class ReitoriaZombieComponent extends SpriteComponent {
       );
     }
     if (_flash > 0) {
-      canvas.drawRect(
-        size.toRect(),
-        Paint()..color = Colors.red.withValues(alpha: .45),
-      );
+      canvas.drawRect(size.toRect(), Paint()..color = Colors.red.withValues(alpha: .45));
     }
   }
 }
 
-class ReitoriaDarknessOverlay extends Component {
-  ReitoriaDarknessOverlay({required this.game, this.radius = 185});
-
-  final ReitoriaLevel game;
-  final double radius;
-
-  @override
-  void render(Canvas canvas) {
-    final viewportSize = game.camera.viewport.size.length2 == 0
-        ? game.size
-        : game.camera.viewport.size;
-    final bounds = Offset.zero & viewportSize.toSize();
-    final center = _playerScreen(viewportSize);
-
-    canvas.saveLayer(bounds, Paint());
-    canvas.drawRect(bounds, Paint()..color = const Color(0xE6000000));
-    canvas.drawCircle(
-      Offset(center.x, center.y),
-      radius,
-      Paint()
-        ..blendMode = BlendMode.dstOut
-        ..shader = const RadialGradient(
-          colors: [Colors.white, Color(0xCCFFFFFF), Color(0x00FFFFFF)],
-          stops: [0.0, 0.6, 1.0],
-        ).createShader(
-          Rect.fromCircle(center: Offset(center.x, center.y), radius: radius),
-        ),
-    );
-    canvas.restore();
-  }
-
-  Vector2 _playerScreen(Vector2 viewportSize) {
-    final p = game.player;
-    if (p == null) return viewportSize / 2;
-    final global = game.camera.localToGlobal(p.position);
-    return game.camera.viewport.globalToLocal(global);
-  }
-}
-
+// ─────────────────────────────────────────────────────────────────────────────
+// ReitoriaFallbackMap — rendered when background image fails to load
+// ─────────────────────────────────────────────────────────────────────────────
 class ReitoriaFallbackMap extends PositionComponent {
   ReitoriaFallbackMap({required Vector2 size}) : super(size: size);
 
   @override
   void render(Canvas canvas) {
-    canvas.drawRect(size.toRect(), Paint()..color = const Color(0xFF1F2937));
+    canvas.drawRect(size.toRect(), Paint()..color = const Color(0xFF1A0A0A));
     final grid = Paint()
-      ..color = const Color(0x2234D399)
+      ..color = const Color(0x22FF3333)
       ..strokeWidth = 1;
     for (var x = 0.0; x < size.x; x += 64) {
       canvas.drawLine(Offset(x, 0), Offset(x, size.y), grid);
