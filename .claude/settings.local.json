@@ -33,7 +33,8 @@
       "Bash(flutter analyze *)",
       "Bash(Rename-Item -Path \"c:\\\\projetos\\\\PI_final\\\\assets\\\\images\\\\zumbis\\\\boss_final.png\" -NewName \"final_boss.png\")",
       "PowerShell(Rename-Item -Path \"c:\\\\projetos\\\\PI_final\\\\assets\\\\images\\\\zumbis\\\\boss_final.png\" -NewName \"final_boss.png\")",
-      "PowerShell(Add-Type -AssemblyName System.Drawing; $img = [System.Drawing.Image]::FromFile\\(\"c:\\\\projetos\\\\PI_final\\\\assets\\\\images\\\\npcs\\\\sargento_rocha.png\"\\); \"Width: $\\($img.Width\\), Height: $\\($img.Height\\)\"; $img.Dispose\\(\\))"
+      "PowerShell(Add-Type -AssemblyName System.Drawing; $img = [System.Drawing.Image]::FromFile\\(\"c:\\\\projetos\\\\PI_final\\\\assets\\\\images\\\\npcs\\\\sargento_rocha.png\"\\); \"Width: $\\($img.Width\\), Height: $\\($img.Height\\)\"; $img.Dispose\\(\\))",
+      "Bash(dir \"C:\\\\projetos\\\\PI_final\\\\assets\\\\tiles\" /b)"
     ]
   }
 }

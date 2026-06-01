@@ -1,6 +1,68 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
+// ── Map viewer ────────────────────────────────────────────────────────────────
+
+void _showMapOverlay(BuildContext context) {
+  showDialog<void>(
+    context: context,
+    barrierDismissible: true,
+    barrierColor: Colors.black.withValues(alpha: 0.92),
+    builder: (_) => const MapViewerOverlay(),
+  );
+}
+
+/// Full-screen modal that shows mapaaberto.png with pinch-to-zoom support.
+/// Dismiss by tapping the barrier or the FECHAR button.
+class MapViewerOverlay extends StatelessWidget {
+  const MapViewerOverlay({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: SafeArea(
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            Center(
+              child: InteractiveViewer(
+                minScale: 0.8,
+                maxScale: 4,
+                child: Image.asset(
+                  'assets/images/objects/mapaaberto.png',
+                  fit: BoxFit.contain,
+                ),
+              ),
+            ),
+            Positioned(
+              top: 12,
+              right: 12,
+              child: GestureDetector(
+                onTap: () => Navigator.of(context).pop(),
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF07070B),
+                    border:
+                        Border.all(color: const Color(0xFFF59E0B), width: 2),
+                    boxShadow: const [
+                      BoxShadow(
+                          color: Color(0xAA000000), offset: Offset(2, 2)),
+                    ],
+                  ),
+                  child: Text('FECHAR', style: _font(8, const Color(0xFFFFF3B0))),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 /// Reusable Flutter HUD that replicates the Phase 1 (H15) layout:
 ///
 ///   [VOLTAR] [♥ 100/100 ██████]      [Missão texto →]
@@ -30,6 +92,7 @@ class BaseGameHud extends StatelessWidget {
     this.killsNotifier,
     this.extraTopLeft,
     this.extraStack = const [],
+    this.mapNotifier,
   });
 
   // ── Required notifiers ──────────────────────────────────────────────────
@@ -56,6 +119,11 @@ class BaseGameHud extends StatelessWidget {
 
   /// Arbitrary [Positioned] widgets overlaid on the full HUD Stack.
   final List<Widget> extraStack;
+
+  /// When provided, a "MAPA" button appears bottom-left whenever its value
+  /// is true. Tapping it opens [MapViewerOverlay]. Pass
+  /// [GameState.instance.hasMapaNotifier] to make it persist across levels.
+  final ValueNotifier<bool>? mapNotifier;
 
   bool get _showStatsRow =>
       survivalSeconds != null || (showKills && killsNotifier != null);
@@ -133,6 +201,21 @@ class BaseGameHud extends StatelessWidget {
               ),
             ),
           ),
+          // ── Persistent map button — bottom-right, visible when collected ──
+          if (mapNotifier != null)
+            Positioned(
+              right: 12,
+              bottom: 20,
+              child: ValueListenableBuilder<bool>(
+                valueListenable: mapNotifier!,
+                builder: (ctx, hasMapa, __) => hasMapa
+                    ? _HudButton(
+                        label: 'MAPA',
+                        onTap: () => _showMapOverlay(ctx),
+                      )
+                    : const SizedBox.shrink(),
+              ),
+            ),
           // ── Phase-specific overlay widgets ──────────────────────────────
           ...extraStack,
         ],

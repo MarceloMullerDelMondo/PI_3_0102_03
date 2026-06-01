@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import '../game/biblioteca_game.dart';
+import '../models/game_state.dart';
 import 'base_game_hud.dart';
 import 'caa_level_screen.dart';
 
@@ -85,15 +86,11 @@ class _BibliotecaLevelScreenState extends State<BibliotecaLevelScreen>
               child: CircularProgressIndicator(color: Color(0xFFF5C842)),
             ),
             overlayBuilderMap: {
-              'ExitDoor': (_, game) => _ExitDoorOverlay(game: game),
+              'CardSwipe': (_, game) => CardSwipeOverlay(game: game),
             },
           ),
 
           // ── Base HUD (health · timer · mission) + card counter ────────
-          //
-          // BaseGameHud renders the Phase 1 layout.
-          // BibliotecaGame uses BaseHudComponent, so notifiers are at hud.*.
-          // The "CARTÃO: 0/1" counter is injected via [extraTopLeft].
           BaseGameHud(
             currentHealth: _game.hud.currentHealth,
             maxHealth: _game.hud.maxHealth,
@@ -102,6 +99,45 @@ class _BibliotecaLevelScreenState extends State<BibliotecaLevelScreen>
             survivalSeconds: _game.hud.survivalSeconds,
             onBack: () => Navigator.of(context).pop(false),
             extraTopLeft: _CardCounter(game: _game),
+            mapNotifier: GameState.instance.hasMapaNotifier,
+            extraStack: [
+              // "USAR CARTÃO" button — appears only when player is at the door
+              // with both items collected. Bottom-right, above joystick area.
+              Positioned(
+                right: 24,
+                bottom: 80,
+                child: ValueListenableBuilder<bool>(
+                  valueListenable: _game.showCardReaderPrompt,
+                  builder: (_, show, __) => AnimatedOpacity(
+                    opacity: show ? 1.0 : 0.0,
+                    duration: const Duration(milliseconds: 180),
+                    child: IgnorePointer(
+                      ignoring: !show,
+                      child: GestureDetector(
+                        onTap: _game.openCardSwipe,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 18, vertical: 14),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF050D18),
+                            border: Border.all(
+                                color: const Color(0xFF86EFAC), width: 2.5),
+                            boxShadow: const [
+                              BoxShadow(
+                                  color: Color(0x6686EFAC), blurRadius: 18),
+                            ],
+                          ),
+                          child: Text(
+                            'USAR CARTÃO',
+                            style: _font(8, const Color(0xFF86EFAC)),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ],
           ),
         ],
       ),
@@ -151,67 +187,241 @@ class _CardCounter extends StatelessWidget {
   }
 }
 
-// ── Phase-specific: Exit Door Overlay ─────────────────────────────────────
+// ── Card Swipe Mini-game Overlay ──────────────────────────────────────────
 
-class _ExitDoorOverlay extends StatelessWidget {
-  const _ExitDoorOverlay({required this.game});
+class CardSwipeOverlay extends StatefulWidget {
+  const CardSwipeOverlay({required this.game, super.key});
 
   final BibliotecaGame game;
 
   @override
+  State<CardSwipeOverlay> createState() => _CardSwipeOverlayState();
+}
+
+class _CardSwipeOverlayState extends State<CardSwipeOverlay> {
+  // Track is 260 px wide; card is 72 px wide → max travel = 188 px.
+  // Threshold at 170 px (~90 % of max) to feel satisfying but not too strict.
+  static const double _trackW = 260;
+  static const double _cardW = 72;
+  static const double _cardH = 46;
+  static const double _threshold = 170;
+
+  double _cardX = 0; // 0 = leftmost start
+  bool _done = false;
+  bool _success = false;
+
+  double get _maxX => _trackW - _cardW;
+
+  void _onDragUpdate(DragUpdateDetails d) {
+    if (_done) return;
+    setState(() => _cardX = (_cardX + d.delta.dx).clamp(0, _maxX));
+  }
+
+  void _onDragEnd(DragEndDetails _) {
+    if (_done) return;
+    if (_cardX >= _threshold) {
+      setState(() {
+        _done = true;
+        _success = true;
+        _cardX = _maxX;
+      });
+      // Brief success pause so the player sees the green state.
+      Future.delayed(const Duration(milliseconds: 700), () {
+        if (mounted) widget.game.onCardSwipeSuccess();
+      });
+    } else {
+      // Snap back — try again.
+      setState(() => _cardX = 0);
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final borderColor =
+        _success ? const Color(0xFF86EFAC) : const Color(0xFFF59E0B);
+    final glowColor =
+        _success ? const Color(0x6686EFAC) : const Color(0x55F59E0B);
+
     return Material(
-      color: Colors.black.withValues(alpha: 0.82),
+      color: Colors.black.withValues(alpha: 0.88),
       child: Center(
         child: Container(
-          constraints: const BoxConstraints(maxWidth: 480),
+          constraints: const BoxConstraints(maxWidth: 400),
           margin: const EdgeInsets.all(24),
-          padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 28),
+          padding: const EdgeInsets.fromLTRB(28, 24, 28, 28),
           decoration: BoxDecoration(
             color: const Color(0xFF050D18),
-            border: Border.all(color: const Color(0xFF38BDF8), width: 2.5),
-            boxShadow: const [
-              BoxShadow(
-                color: Color(0x5538BDF8),
-                blurRadius: 32,
-                spreadRadius: -4,
-              ),
+            border: Border.all(color: borderColor, width: 2.5),
+            boxShadow: [
+              BoxShadow(color: glowColor, blurRadius: 28, spreadRadius: -4),
             ],
           ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Text('PORTA DE SAÍDA', style: _font(13, const Color(0xFF7DD3FC))),
-              const SizedBox(height: 16),
+              // Title
+              Text('LEITOR DE CARTÃO',
+                  style: _font(10, const Color(0xFFF59E0B))),
+              const SizedBox(height: 10),
+              // Status line
               Text(
-                'Rota para o CAA desbloqueada.\nDeseja prosseguir?',
-                textAlign: TextAlign.center,
-                style: _font(8, const Color(0xFFE5E7EB), height: 1.9),
+                _success ? 'ACESSO CONCEDIDO ✓' : 'Deslize o cartão →',
+                style: _font(
+                  8,
+                  _success
+                      ? const Color(0xFF86EFAC)
+                      : const Color(0xFFD1D5DB),
+                  height: 1.6,
+                ),
               ),
-              const SizedBox(height: 28),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  _OverlayButton(
-                    label: 'CANCELAR',
-                    color: const Color(0xFF1F2937),
-                    borderColor: const Color(0xFF4B5563),
-                    textColor: const Color(0xFF9CA3AF),
-                    onTap: game.onExitCancelled,
-                  ),
-                  const SizedBox(width: 16),
-                  _OverlayButton(
-                    label: 'ENTRAR',
-                    color: const Color(0xFF061827),
-                    borderColor: const Color(0xFF38BDF8),
-                    textColor: const Color(0xFFE0F2FE),
-                    onTap: game.onExitConfirmed,
-                  ),
-                ],
+              const SizedBox(height: 22),
+
+              // Swipe track
+              _SwipeTrack(
+                trackW: _trackW,
+                cardW: _cardW,
+                cardH: _cardH,
+                cardX: _cardX,
+                success: _success,
+                onDragUpdate: _onDragUpdate,
+                onDragEnd: _onDragEnd,
               ),
+
+              // Arrow hint
+              if (!_success) ...[
+                const SizedBox(height: 8),
+                const Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.arrow_forward,
+                        color: Color(0xFF4B5563), size: 14),
+                    Icon(Icons.arrow_forward,
+                        color: Color(0xFF6B7280), size: 14),
+                    Icon(Icons.arrow_forward,
+                        color: Color(0xFF9CA3AF), size: 14),
+                  ],
+                ),
+              ],
+
+              const SizedBox(height: 22),
+
+              // Cancel — hidden after success
+              if (!_success)
+                _OverlayButton(
+                  label: 'CANCELAR',
+                  color: const Color(0xFF1F2937),
+                  borderColor: const Color(0xFF4B5563),
+                  textColor: const Color(0xFF9CA3AF),
+                  onTap: widget.game.dismissCardSwipe,
+                ),
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+// Horizontal swipe track with a draggable access-card widget.
+class _SwipeTrack extends StatelessWidget {
+  const _SwipeTrack({
+    required this.trackW,
+    required this.cardW,
+    required this.cardH,
+    required this.cardX,
+    required this.success,
+    required this.onDragUpdate,
+    required this.onDragEnd,
+  });
+
+  final double trackW, cardW, cardH, cardX;
+  final bool success;
+  final void Function(DragUpdateDetails) onDragUpdate;
+  final void Function(DragEndDetails) onDragEnd;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: trackW,
+      height: cardH + 16,
+      decoration: BoxDecoration(
+        color: const Color(0xFF0F172A),
+        border: Border.all(
+          color: success ? const Color(0xFF86EFAC) : const Color(0xFF374151),
+          width: 1.5,
+        ),
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Stack(
+        children: [
+          // Slot line
+          Positioned(
+            left: 10,
+            right: 10,
+            top: (cardH + 16) / 2 - 1,
+            height: 2,
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: success
+                    ? const Color(0xFF86EFAC)
+                    : const Color(0xFF1F2937),
+              ),
+            ),
+          ),
+          // Card — the only draggable surface
+          Positioned(
+            left: 8 + cardX,
+            top: 8,
+            child: GestureDetector(
+              onHorizontalDragUpdate: onDragUpdate,
+              onHorizontalDragEnd: onDragEnd,
+              child: Container(
+                width: cardW,
+                height: cardH,
+                decoration: BoxDecoration(
+                  color: success
+                      ? const Color(0xFF86EFAC)
+                      : const Color(0xFF1D4ED8),
+                  borderRadius: BorderRadius.circular(3),
+                  border: Border.all(
+                    color: success
+                        ? const Color(0xFF4ADE80)
+                        : const Color(0xFF60A5FA),
+                    width: 1.5,
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: success
+                          ? const Color(0x8086EFAC)
+                          : const Color(0x6038BDF8),
+                      blurRadius: 10,
+                    ),
+                  ],
+                ),
+                // Card face: gold stripe + chip
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Container(
+                      margin: const EdgeInsets.symmetric(horizontal: 8),
+                      height: 6,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFFACC15),
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                    const SizedBox(height: 5),
+                    Container(
+                      margin: const EdgeInsets.symmetric(horizontal: 8),
+                      height: 3,
+                      color: Colors.white.withValues(alpha: 0.25),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

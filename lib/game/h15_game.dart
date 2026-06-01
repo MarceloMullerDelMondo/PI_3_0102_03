@@ -907,8 +907,10 @@ class PlayerComponent extends SpriteAnimationGroupComponent<PlayerAnim>
   static const double attackStepTime = 0.08;
   static const double _attackHoldDuration = 0.15;
   static final Vector2 visualSize = Vector2(96, 96);
-  static final Vector2 _bodyHBPos = Vector2(34, 40);
-  static final Vector2 _bodyHBSize = Vector2(28, 44);
+  // Mutable so individual game scenes can tune the hitbox before world.add().
+  // Defaults are calibrated for the native 96×96 sprite size.
+  Vector2 hitboxPos = Vector2(34, 40);
+  Vector2 hitboxSize = Vector2(28, 44);
 
   bool _facingLeft = false;
   bool _isAttacking = false;
@@ -1054,7 +1056,7 @@ class PlayerComponent extends SpriteAnimationGroupComponent<PlayerAnim>
   @override
   Future<void> onLoad() async {
     await super.onLoad();
-    add(RectangleHitbox(position: _bodyHBPos, size: _bodyHBSize));
+    add(RectangleHitbox(position: hitboxPos, size: hitboxSize));
   }
 
   void move(Vector2 dir, double dt, Vector2 bounds, List<SolidObstacle> walls) {
@@ -1102,9 +1104,9 @@ class PlayerComponent extends SpriteAnimationGroupComponent<PlayerAnim>
   }
 
   Rect get feetRect {
-    final tl = Offset(position.x - size.x / 2 + _bodyHBPos.x,
-        position.y - size.y / 2 + _bodyHBPos.y);
-    return Rect.fromLTWH(tl.dx, tl.dy, _bodyHBSize.x, _bodyHBSize.y);
+    final tl = Offset(position.x - size.x / 2 + hitboxPos.x,
+        position.y - size.y / 2 + hitboxPos.y);
+    return Rect.fromLTWH(tl.dx, tl.dy, hitboxSize.x, hitboxSize.y);
   }
 
   @override

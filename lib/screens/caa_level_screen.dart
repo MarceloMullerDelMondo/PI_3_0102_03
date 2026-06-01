@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import '../game/caa_game.dart';
+import '../models/game_state.dart';
 import 'base_game_hud.dart';
 
 class CaaLevelScreen extends StatefulWidget {
@@ -94,6 +95,7 @@ class _CaaLevelScreenState extends State<CaaLevelScreen>
                 hudMessage: _game.hudMessage,
                 // Horde kills shown in extraTopLeft; no separate stats row needed.
                 onBack: () => Navigator.of(context).pop(false),
+                mapNotifier: GameState.instance.hasMapaNotifier,
                 extraTopLeft: ValueListenableBuilder<CAAPhase>(
                   valueListenable: _game.phase,
                   builder: (_, ph, __) => Visibility(

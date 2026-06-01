@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import '../game/reitoria_game.dart';
+import '../models/game_state.dart';
 import 'base_game_hud.dart';
 
 class ReitoriaLevelScreen extends StatefulWidget {
@@ -106,6 +107,7 @@ class _ReitoriaLevelScreenState extends State<ReitoriaLevelScreen>
                 missionText: _game.missionText,
                 hudMessage: _game.hudMessage,
                 onBack: () => Navigator.of(context).pop(false),
+                mapNotifier: GameState.instance.hasMapaNotifier,
                 extraStack: [
                   // Attack button — bottom right
                   Positioned(
