@@ -80,7 +80,7 @@ class _CaaLevelScreenState extends State<CaaLevelScreen>
               child: CircularProgressIndicator(color: Color(0xFFF5C842)),
             ),
             overlayBuilderMap: {
-              'FinalChoice': (_, game) => CaaFinalChoiceOverlay(game: game),
+              'DilemmaMenu': (_, game) => CaaDilemmaMenuOverlay(game: game),
             },
           ),
           ValueListenableBuilder<bool>(
@@ -94,7 +94,13 @@ class _CaaLevelScreenState extends State<CaaLevelScreen>
                 hudMessage: _game.hudMessage,
                 // Horde kills shown in extraTopLeft; no separate stats row needed.
                 onBack: () => Navigator.of(context).pop(false),
-                extraTopLeft: _HordeCounter(game: _game),
+                extraTopLeft: ValueListenableBuilder<CAAPhase>(
+                  valueListenable: _game.phase,
+                  builder: (_, ph, __) => Visibility(
+                    visible: ph == CAAPhase.defendingHorde,
+                    child: _HordeCounter(game: _game),
+                  ),
+                ),
                 extraStack: [
                   // Interact button (centre-right)
                   Positioned(
@@ -218,20 +224,20 @@ class _HordeCounter extends StatelessWidget {
       ),
       child: ValueListenableBuilder<int>(
         valueListenable: game.zombiesKilled,
-        builder: (_, kills, __) => ValueListenableBuilder<int>(
-          valueListenable: game.zombiesRemaining,
-          builder: (_, left, __) => Text(
-            'HORDA $kills/${CAALevel.hordeTarget}  RESTAM $left',
+        builder: (_, kills, __) {
+          final restam = (CAALevel.hordeTarget - kills).clamp(0, CAALevel.hordeTarget);
+          return Text(
+            'HORDA $kills/${CAALevel.hordeTarget}  RESTAM $restam',
             style: _font(7, const Color(0xFFFFD166)),
-          ),
-        ),
+          );
+        },
       ),
     );
   }
 }
 
-class CaaFinalChoiceOverlay extends StatelessWidget {
-  const CaaFinalChoiceOverlay({super.key, required this.game});
+class CaaDilemmaMenuOverlay extends StatelessWidget {
+  const CaaDilemmaMenuOverlay({super.key, required this.game});
 
   final CAALevel game;
 
@@ -253,13 +259,13 @@ class CaaFinalChoiceOverlay extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             children: [
               Text(
-                'TERMINAL DO CAA',
+                'DILEMA — SARGENTO ROCHA',
                 textAlign: TextAlign.center,
-                style: _font(16, const Color(0xFFF5C842)),
+                style: _font(14, const Color(0xFFF5C842)),
               ),
               const SizedBox(height: 16),
               Text(
-                'A horda foi contida. O transmissor so aguenta um envio. Escolha o sinal que a Reitoria recebera.',
+                'A horda foi contida. O transmissor so aguenta um envio.\nEscolha o destino do sinal.',
                 textAlign: TextAlign.center,
                 style: _font(9, const Color(0xFFE5E7EB), height: 1.9),
               ),
@@ -270,13 +276,12 @@ class CaaFinalChoiceOverlay extends StatelessWidget {
                 alignment: WrapAlignment.center,
                 children: [
                   _ChoiceButton(
-                    title: 'SINAL DE RESGATE',
-                    subtitle: 'Prioriza evacuar sobreviventes.',
-                    onTap: () =>
-                        game.chooseFinalSignal(CAAFinalChoice.rescueSignal),
+                    title: 'SINAL DE RESGATE\n(PORTAO 1)',
+                    subtitle: 'Prioriza evacuar os sobreviventes do campus.',
+                    onTap: () => game.chooseFinalSignal(CAAFinalChoice.rescueSignal),
                   ),
                   _ChoiceButton(
-                    title: 'SINAL DE TRANSMISSAO DE DADOS',
+                    title: 'SINAL DE TRANSMISSAO\nDE DADOS (REITORIA)',
                     subtitle: 'Envia os dados da cura para a Reitoria.',
                     onTap: () => game.chooseFinalSignal(CAAFinalChoice.cureData),
                   ),
