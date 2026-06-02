@@ -3,6 +3,8 @@ import 'package:flame/game.dart';
 import 'package:flame/components.dart';
 import 'package:flutter/material.dart';
 
+import '../services/audio_manager.dart';
+
 // ─────────────────────────────────────────────────────────────────────────────
 // SurvivalGame — motor principal
 // ─────────────────────────────────────────────────────────────────────────────
@@ -50,6 +52,7 @@ class SurvivalGame extends FlameGame with HasCollisionDetection {
 
   @override
   Future<void> onLoad() async {
+    MusicManager.instance.stopMenuBgm();
     // Câmera
     _cam = CameraComponent(world: world);
     _cam.viewfinder.anchor = Anchor.center;

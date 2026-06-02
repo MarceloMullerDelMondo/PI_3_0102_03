@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import '../game/cafeteria_game.dart';
+import '../models/game_state.dart';
 import 'base_game_hud.dart';
 
 class CafeteriaLevelScreen extends StatefulWidget {
@@ -75,11 +76,12 @@ class _CafeteriaLevelScreenState extends State<CafeteriaLevelScreen>
               child: CircularProgressIndicator(color: Color(0xFFF5C842)),
             ),
             overlayBuilderMap: {
-              'MarcosDialog': (_, game) => MarcosDialogOverlay(game: game),
-              'RadioTune':    (_, game) => RadioTuneOverlay(game: game),
-              'GameOver':     (_, game) => CafeteriaGameOver(game: game),
-              'FuseBox':      (_, game) => FuseBoxOverlay(game: game),
-              'LockerKeypad': (_, game) => LockerKeypadOverlay(game: game),
+              'MarcosDialog':  (_, game) => MarcosDialogOverlay(game: game),
+              'RadioTune':     (_, game) => RadioTuneOverlay(game: game),
+              'GameOver':      (_, game) => CafeteriaGameOver(game: game),
+              'FuseBox':       (_, game) => FuseBoxOverlay(game: game),
+              'LockerKeypad':  (_, game) => LockerKeypadOverlay(game: game),
+              'SenhaArmario':  (_, game) => SenhaArmarioOverlay(game: game),
             },
           ),
           ValueListenableBuilder<bool>(
@@ -88,13 +90,17 @@ class _CafeteriaLevelScreenState extends State<CafeteriaLevelScreen>
               valueListenable: _game.gameOver,
               builder: (_, gameOver, __) {
                 if (dialogOpen || gameOver) return const SizedBox.shrink();
-                return BaseGameHud(
+                return ValueListenableBuilder<double>(
+                  valueListenable: _game.maxHealth,
+                  builder: (_, maxHp, __) => BaseGameHud(
                   currentHealth: _game.currentHealth,
-                  maxHealth: 100,
+                  maxHealth: maxHp,
                   missionText: _game.missionText,
                   hudMessage: _game.hudMessage,
                   onBack: () => Navigator.of(context).pop(false),
-                  extraTopLeft: _CafNoisePanel(game: _game),
+                  mapNotifier: GameState.instance.hasMapaNotifier,
+                  showKills: true,
+                  killsNotifier: _game.zombiesKilled,
                   extraStack: [
                     // Interact button
                     Positioned(
@@ -140,37 +146,16 @@ class _CafeteriaLevelScreenState extends State<CafeteriaLevelScreen>
                         ],
                       ),
                     ),
-                    // Dev skip-mission button
+                    // DEV button — anchored below the mission popup (top-right).
                     if (widget.devMode)
                       Positioned(
-                        top: 10,
-                        left: 0,
-                        right: 0,
-                        child: Center(
-                          child: GestureDetector(
-                            onTap: _game.devSkipMission,
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 10,
-                                vertical: 6,
-                              ),
-                              decoration: BoxDecoration(
-                                color: const Color(0xDD001400),
-                                border: Border.all(
-                                  color: const Color(0xFF00FF00),
-                                  width: 1.5,
-                                ),
-                              ),
-                              child: Text(
-                                '[DEV] PULAR MISSÃO',
-                                style: _font(7, const Color(0xFF00FF00)),
-                              ),
-                            ),
-                          ),
-                        ),
+                        top: 80,
+                        right: 12,
+                        child: _DevSkipButton(onTap: _game.devSkipMission),
                       ),
                   ],
-                );
+                ),   // BaseGameHud
+                );   // ValueListenableBuilder<double>
               },
             ),
           ),
@@ -180,48 +165,6 @@ class _CafeteriaLevelScreenState extends State<CafeteriaLevelScreen>
   }
 }
 
-/// Injected into [BaseGameHud.extraTopLeft] for Phase 2.
-/// Shows the noise meter and item counters below the health bar.
-class _CafNoisePanel extends StatelessWidget {
-  const _CafNoisePanel({required this.game});
-
-  final CafeteriaGame game;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      decoration: BoxDecoration(
-        color: const Color(0xE607070B),
-        border: Border.all(color: const Color(0xFFF59E0B), width: 1.5),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          ValueListenableBuilder<int>(
-            valueListenable: game.brokenTables,
-            builder: (_, count, __) => Text(
-              'BARULHO $count/${game.maxSafeBrokenTables}',
-              style: _font(7, const Color(0xFFFFD166)),
-            ),
-          ),
-          const SizedBox(height: 4),
-          ValueListenableBuilder<int>(
-            valueListenable: game.emergencyMedkit,
-            builder: (_, med, __) => ValueListenableBuilder<int>(
-              valueListenable: game.stimulant,
-              builder: (_, stim, __) => Text(
-                'MED $med  EST $stim',
-                style: _font(7, const Color(0xFF86EFAC)),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
 
 class MarcosDialogOverlay extends StatefulWidget {
   const MarcosDialogOverlay({super.key, required this.game});
@@ -350,12 +293,12 @@ class _MarcosDialogOverlayState extends State<MarcosDialogOverlay> {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        const _Speech(text: 'O caminho pro CAA esta aberto. Mas nao vou mentir: se aqui ja esta ruim, la dentro vai ser pior.'),
+        const _Speech(text: 'Fase concluida. O caminho pro CAA esta aberto.'),
         const SizedBox(height: 18),
-        _Choice('Continuar explorando o Refeitorio', () {
+        _Choice('Explorar Refeitorio', () {
           widget.game.continueExploring();
         }),
-        _Choice('Seguir para a proxima area', () {
+        _Choice('Ir para Proxima Fase', () {
           widget.game.goToArea3(context);
         }),
       ],
@@ -1106,6 +1049,94 @@ class _CafAttackButtonState extends State<_CafAttackButton> {
               'ATK',
               style: _font(11,
                   widget.enabled ? Colors.redAccent : const Color(0xFFB0B0B0)),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _DevSkipButton extends StatelessWidget {
+  const _DevSkipButton({required this.onTap});
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: BoxDecoration(
+          color: const Color(0xDD001400),
+          border: Border.all(color: const Color(0xFF00FF00), width: 1.5),
+        ),
+        child: Text('[DEV] PULAR MISSÃO', style: _font(7, const Color(0xFF00FF00))),
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SenhaArmarioOverlay — shows the cabinet password "417" as a found document.
+// Closed by the player → game.onSenhaArmarioClosed() advances quest step.
+// ─────────────────────────────────────────────────────────────────────────────
+class SenhaArmarioOverlay extends StatelessWidget {
+  const SenhaArmarioOverlay({super.key, required this.game});
+  final CafeteriaGame game;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: game.onSenhaArmarioClosed,
+      child: Container(
+        color: Colors.black.withValues(alpha: 0.72),
+        child: Center(
+          child: Container(
+            width: 260,
+            padding: const EdgeInsets.fromLTRB(24, 28, 24, 22),
+            decoration: BoxDecoration(
+              color: const Color(0xFFFEF9E7),
+              border: Border.all(color: const Color(0xFFD4A017), width: 2.5),
+              borderRadius: BorderRadius.circular(4),
+              boxShadow: const [
+                BoxShadow(color: Colors.black54, blurRadius: 18, offset: Offset(4, 6)),
+              ],
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text('NOTA ENCONTRADA',
+                    style: _font(7, const Color(0xFF6B4A2E)),
+                    textAlign: TextAlign.center),
+                const SizedBox(height: 18),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                  decoration: BoxDecoration(
+                    border: Border.all(color: const Color(0xFF9B7E35)),
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                  child: Text('417',
+                      style: _font(36, const Color(0xFF1F1F1F)),
+                      textAlign: TextAlign.center),
+                ),
+                const SizedBox(height: 14),
+                Text('SENHA DO ARMARIO',
+                    style: _font(6, const Color(0xFF8B6A2E)),
+                    textAlign: TextAlign.center),
+                const SizedBox(height: 22),
+                GestureDetector(
+                  onTap: game.onSenhaArmarioClosed,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 10),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF6B4A2E),
+                      borderRadius: BorderRadius.circular(3),
+                    ),
+                    child: Text('FECHAR', style: _font(8, Colors.white)),
+                  ),
+                ),
+              ],
             ),
           ),
         ),

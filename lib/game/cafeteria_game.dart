@@ -10,19 +10,65 @@ import 'package:flame/game.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../models/game_state.dart';
+import '../services/audio_manager.dart';
 import '../services/firebase_service.dart';
+import 'zumbi_component.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Enums
 // ─────────────────────────────────────────────────────────────────────────────
 enum CafeteriaDialog { marcosIntro, marcosSecond, reward, exitChoice }
 
-enum CafZombieAnim { idle, walkDown, walkLeft, walkRight, walkUp }
+enum QuestStep {
+  falarMarcos,    // 0 – speak to Marcos to begin
+  coletarPecas,   // 1 – collect the radio piece (break path first)
+  ligarRadio,     // 2 – interact with the radio
+  matarHorda,     // 3 – defeat the zombie horde
+  pegarPapel,     // 4 – collect the document (pecinha)
+  pegarFusiveis,  // 5 – collect both fuses
+  ativarPainel,   // 6 – activate the electrical panel
+  concluirFase,   // 7 – return to Marcos to finish
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MissionManager — strict 8-step state machine for Área 2.
+// ─────────────────────────────────────────────────────────────────────────────
+class MissionManager {
+  static const int _hordeKillsRequired = 5;
+
+  QuestStep currentStep = QuestStep.falarMarcos;
+  int _hordeKills = 0;
+
+  void advance(QuestStep next) {
+    currentStep = next;
+  }
+
+  /// Call on every zombie kill. Returns true when the horde quota is met.
+  bool registerKill() {
+    if (currentStep != QuestStep.matarHorda) return false;
+    _hordeKills++;
+    return _hordeKills >= _hordeKillsRequired;
+  }
+
+  static String updateQuestText(QuestStep step) {
+    switch (step) {
+      case QuestStep.falarMarcos:   return 'Fale com Marcos.';
+      case QuestStep.coletarPecas:  return 'Colete as pecas necessarias.';
+      case QuestStep.ligarRadio:    return 'Ligue o radio.';
+      case QuestStep.matarHorda:    return 'Elimine a horda de zumbis.';
+      case QuestStep.pegarPapel:    return 'Pegue o papel de instrucoes.';
+      case QuestStep.pegarFusiveis: return 'Colete os 2 fusiveis.';
+      case QuestStep.ativarPainel:  return 'Ative o painel eletrico.';
+      case QuestStep.concluirFase:  return 'Fase concluida! Fale com Marcos.';
+    }
+  }
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CafeteriaGame
 // ─────────────────────────────────────────────────────────────────────────────
-class CafeteriaGame extends FlameGame with HasCollisionDetection {
+class CafeteriaGame extends FlameGame with HasCollisionDetection implements ZumbiGame {
   CafeteriaGame({required this.playerName});
 
   @override
@@ -38,8 +84,9 @@ class CafeteriaGame extends FlameGame with HasCollisionDetection {
   SpriteComponent? _background;
   MarcosComponent? _marcos;
   ElectricalPanelComponent? _panel;
-  LockerComponent? _locker;
-  final List<CafeteriaZombieComponent> _zombies = [];
+  LockerComponent? _locker;   // used only by fallback path
+  ArmarioComponent? _armario; // used by Tiled path
+  final List<ZumbiComponent> _zombies = [];
   final List<CafeteriaProp> _props = [];
   final List<CafeteriaPickup> _pickups = [];
   final List<CafWall> _walls = [];
@@ -48,7 +95,7 @@ class CafeteriaGame extends FlameGame with HasCollisionDetection {
   final ValueNotifier<double> currentHealth = ValueNotifier(100);
   final ValueNotifier<double> maxHealth = ValueNotifier(100);
   final ValueNotifier<String> missionText =
-      ValueNotifier('Missao: atravesse o refeitorio ate Marcos.');
+      ValueNotifier(MissionManager.updateQuestText(QuestStep.falarMarcos));
   final ValueNotifier<String?> hudMessage = ValueNotifier(null);
   final ValueNotifier<String> interactLabel = ValueNotifier('INTERAGIR');
   final ValueNotifier<bool> canInteract = ValueNotifier(false);
@@ -59,6 +106,7 @@ class CafeteriaGame extends FlameGame with HasCollisionDetection {
   final ValueNotifier<int> stimulant = ValueNotifier(0);
   final ValueNotifier<List<String>> secretCodePieces = ValueNotifier([]);
   final ValueNotifier<bool> attackEnabled = ValueNotifier(true);
+  final ValueNotifier<int> zombiesKilled = ValueNotifier(0);
 
   // ── Quest state ───────────────────────────────────────────────────────────
   CafeteriaDialog? activeDialog;
@@ -70,18 +118,30 @@ class CafeteriaGame extends FlameGame with HasCollisionDetection {
   bool hasEmergencyMedkit = false;
   bool usedReviveThisArea = false;
   int stimulantCount = 0;
-  bool areaCQuestStarted = false;
-  bool areaCBarricadeBroken = false;
   bool radioPowered = false;
   bool radioTuned = false;
   bool secretCodeCompleted = false;
   bool vitalBoostCollected = false;
   bool mainCompleted = false;
-  int _mainStep = 0;
+  final MissionManager mission = MissionManager();
   int _fusesInstalled = 0;
-  int _defensesReinforced = 0;
   async.Timer? _stimTimer;
   double _tableDamageCooldown = 0;
+  List<Vector2> _zombieSpawnPoints = [];
+  CafeteriaPickup? _pendingSenhaPickup;
+
+  void _advanceMission(QuestStep next) {
+    mission.advance(next);
+    missionText.value = MissionManager.updateQuestText(next);
+    debugPrint('Mission updated to: $next');
+  }
+
+  // ── ZumbiGame interface ────────────────────────────────────────────────────
+  @override Vector2 get zumbiMapSize => _mapSize;
+  @override List<Rect> get zumbiWallRects =>
+      _walls.map((w) => w.wallRect).toList(growable: false);
+  @override void zumbiDamagePlayer(double amount) => damagePlayer(amount);
+  @override List<ZumbiComponent> get spawnedZombies => _zombies;
 
   @override
   Color backgroundColor() => Colors.black;
@@ -90,14 +150,11 @@ class CafeteriaGame extends FlameGame with HasCollisionDetection {
   @override
   Future<void> onLoad() async {
     await super.onLoad();
+    MusicManager.instance.stopMenuBgm(); // stop menu BGM before any level asset load
     camera.viewfinder.anchor = Anchor.center;
 
-    // 1. Parse Tiled map — sets _mapSize and spawns all entities.
-    //    Returns player spawn position (from the 'player spawn' layer).
-    final mapData = await _loadMapJson();
-    final spawn = mapData != null
-        ? await _spawnFromTiled(mapData)
-        : _spawnFallback();
+    // 1. Parse Tiled map — throws Exception if the file is missing.
+    final spawn = await _spawnFromTiled(await _loadMapJson());
 
     // 2. Background at confirmed map dimensions.
     try {
@@ -134,25 +191,29 @@ class CafeteriaGame extends FlameGame with HasCollisionDetection {
     camera.setBounds(Rectangle.fromLTWH(0, 0, _mapSize.x, _mapSize.y));
     camera.follow(playerComp, snap: true);
 
-    // 5. Weapon from Firebase.
+    // 5. Weapon from Firebase — always equips at least the basic sword.
+    // Safety loadout: if Firebase returns null/empty the player gets 'Espada'
+    // so they are never unarmed (critical for DEV skip-level flows).
     FirebaseService.instance.loadWeapon().then((weapon) async {
-      if (weapon == null || weapon.isEmpty) return;
-      final asset = weapon == 'Duas Adagas'
+      final selected = (weapon == null || weapon.isEmpty) ? 'Espada' : weapon;
+      final asset = selected == 'Duas Adagas'
           ? 'player/player_espada2mao.png'
           : 'player/player_espada1mao.png';
       try {
         final img = await images.load(asset);
         player?.replaceWithWeaponSheet(img);
-        showHudMessage('Arma: $weapon');
       } catch (e) {
-        debugPrint('Weapon sprite: $e');
+        debugPrint('Weapon sprite ($selected): $e');
       }
-    }).catchError((_) {});
+    }).catchError((_) async {
+      // Firebase unavailable — equip the fallback sword silently.
+      try {
+        final img = await images.load('player/player_espada1mao.png');
+        player?.replaceWithWeaponSheet(img);
+      } catch (_) {}
+    });
 
-    // 6. Zombies (no Tiled layer — scale to new map).
-    _spawnInitialZombies();
-
-    // 7. Joystick.
+    // 6. Joystick.
     _setupJoystick();
 
     // 8. Intro hint.
@@ -160,7 +221,11 @@ class CafeteriaGame extends FlameGame with HasCollisionDetection {
       if (!gameOver.value) showHudMessage('Encontre Marcos no armazem de suprimentos.');
     });
 
-    // 9. Firebase state.
+    // 9. Mission state machine — hard reset to step 0 before Firebase may override.
+    _advanceMission(QuestStep.falarMarcos);
+    debugPrint('HUD initialized with Kills: ${zombiesKilled.value}');
+
+    // 10. Firebase state (may advance currentMissionStep if progress was saved).
     _loadSavedProgress()
         .timeout(const Duration(seconds: 6))
         .catchError((e) => debugPrint('_loadSavedProgress falhou: $e'));
@@ -169,14 +234,18 @@ class CafeteriaGame extends FlameGame with HasCollisionDetection {
 
   // ── Tiled map loader ───────────────────────────────────────────────────────
 
-  Future<Map<String, dynamic>?> _loadMapJson() async {
+  // Throws if the Tiled JSON is missing — no fallback, no silent failure.
+  Future<Map<String, dynamic>> _loadMapJson() async {
     try {
       final raw = await rootBundle
           .loadString('assets/tiles/refeitorio_collisions.json');
       return jsonDecode(raw) as Map<String, dynamic>;
     } catch (e) {
-      debugPrint('CafeteriaGame: map JSON load failed: $e');
-      return null;
+      throw Exception(
+        'FATAL: refeitorio_collisions.json not found or invalid.\n'
+        'Ensure the file exists at assets/tiles/refeitorio_collisions.json.\n'
+        'Original error: $e',
+      );
     }
   }
 
@@ -227,32 +296,46 @@ class CafeteriaGame extends FlameGame with HasCollisionDetection {
 
         case 'fusivel':
           for (final obj in objects) {
-            _addPickup('fuse', _centerOf(obj));
+            _addPickup('fuse', _floorPosOf(obj));
           }
 
         case 'pecaradio':
           for (final obj in objects) {
-            _addPickup('radioPart', _centerOf(obj));
+            _addPickup('radioPart', _floorPosOf(obj));
           }
 
         case 'radio':
           for (final obj in objects) {
-            _addPickup('radio', _centerOf(obj));
+            _addPickup('radio', _floorPosOf(obj));
           }
 
         case 'pecinha':
           for (final obj in objects) {
-            _addPickup('pecinha', _centerOf(obj));
+            _addPickup('pecinha', _floorPosOf(obj));
           }
 
         case 'armario':
-          _spawnLocker(objects.first);
+          _spawnArmario(objects.first);
 
         case 'painel eletrico':
+        case 'painelfusivel':
           _spawnPanel(objects.first);
 
-        case 'reforco defesa':
-          _spawnDefenseProps(objects);
+        case 'zumbispawn':   // actual Tiled layer name
+        case 'spawnzumbi':   // alias in case it is renamed in Tiled
+          _zombieSpawnPoints = objects.map(_floorPosOf).toList();
+
+        case 'papelsenha':    // actual Tiled layer name (paper with 417 code)
+        case 'senhaarmario':  // alias
+          for (final obj in objects) {
+            final sz = CafeteriaGame._pickupDisplaySize('senha');
+            final pickup = CafeteriaPickup(kind: 'senha', game: this)
+              ..position = _clampToMapBottom(_floorPosOf(obj), sz)
+              ..size = sz
+              ..priority = 2;
+            _pickups.add(pickup);
+            world.add(pickup);
+          }
 
         case 'table_front':
           _spawnTableProps(objects, 'objects/table_front.png');
@@ -272,48 +355,6 @@ class CafeteriaGame extends FlameGame with HasCollisionDetection {
     }
 
     return playerSpawn;
-  }
-
-  // Fallback when the JSON fails to load: hardcoded 1142×928 layout.
-  Vector2 _spawnFallback() {
-    _mapSize = Vector2(1142, 928);
-    _addBorderWalls();
-    final specs = [
-      CafPropSpec('table', Vector2(170, 183), Vector2(130, 52), asset: 'objects/table_front.png'),
-      CafPropSpec('table', Vector2(450, 183), Vector2(130, 52), asset: 'objects/table_s.png'),
-      CafPropSpec('table', Vector2(620, 183), Vector2(130, 52), asset: 'objects/table_e.png'),
-      CafPropSpec('table', Vector2(160, 318), Vector2(130, 52), asset: 'objects/table_n.png'),
-      CafPropSpec('table', Vector2(510, 358), Vector2(90, 100),  asset: 'objects/table_ne.png'),
-      CafPropSpec('table', Vector2(700, 358), Vector2(92, 100),  asset: 'objects/table_se.png'),
-      CafPropSpec('areaC', Vector2(955, 400), Vector2(130, 58),  asset: 'objects/table_w.png'),
-      CafPropSpec('defense', Vector2(700, 560), Vector2(60, 42)),
-      CafPropSpec('defense', Vector2(820, 590), Vector2(60, 42)),
-      CafPropSpec('defense', Vector2(940, 520), Vector2(60, 42)),
-    ];
-    for (final spec in specs) {
-      final prop = CafeteriaProp(spec: spec, game: this)..priority = 8;
-      _props.add(prop);
-      world.add(prop);
-    }
-    _addPickup('fuse',      Vector2(260, 180));
-    _addPickup('fuse',      Vector2(900, 700));
-    _addPickup('radioPart', Vector2(1020, 320));
-    _addPickup('radio',     Vector2(855, 660));
-    _addPickup('vitalBoost', Vector2(1090, 780));
-    _panel = ElectricalPanelComponent(game: this)
-      ..position = Vector2(810, 660)
-      ..priority = 8;
-    world.add(_panel!);
-    const lockerY = 740.0;
-    _locker = LockerComponent(game: this)
-      ..position = Vector2(1075, lockerY)
-      ..priority = lockerY.ceil();
-    world.add(_locker!);
-    _marcos = MarcosComponent(game: this)
-      ..position = Vector2(870, 490)
-      ..priority = 8;
-    world.add(_marcos!);
-    return Vector2(420, 430);
   }
 
   // ── Tiled wall spawners ────────────────────────────────────────────────────
@@ -357,19 +398,6 @@ class CafeteriaGame extends FlameGame with HasCollisionDetection {
     world.add(w);
   }
 
-  // Fallback border walls used only when JSON loading fails.
-  void _addBorderWalls() {
-    const t = 8.0;
-    for (final s in [
-      (Vector2.zero(),             Vector2(_mapSize.x, t)),
-      (Vector2(0, _mapSize.y - t), Vector2(_mapSize.x, t)),
-      (Vector2.zero(),             Vector2(t, _mapSize.y)),
-      (Vector2(_mapSize.x - t, 0), Vector2(t, _mapSize.y)),
-    ]) {
-      _addCafWall(s.$1, s.$2);
-    }
-  }
-
   // ── Tiled entity spawners ──────────────────────────────────────────────────
 
   void _spawnTableProps(
@@ -389,16 +417,6 @@ class CafeteriaGame extends FlameGame with HasCollisionDetection {
     }
   }
 
-  void _spawnDefenseProps(List<Map<String, dynamic>> objects) {
-    for (final obj in objects) {
-      final pos = _centerOf(obj);
-      final spec = CafPropSpec('defense', pos, Vector2(60, 42));
-      final prop = CafeteriaProp(spec: spec, game: this)..priority = 10;
-      _props.add(prop);
-      world.add(prop);
-    }
-  }
-
   void _spawnPanel(Map<String, dynamic> obj) {
     final w = (obj['width'] as num? ?? 80).toDouble();
     final h = (obj['height'] as num? ?? 60).toDouble();
@@ -411,28 +429,38 @@ class CafeteriaGame extends FlameGame with HasCollisionDetection {
     world.add(_panel!);
   }
 
-  void _spawnLocker(Map<String, dynamic> obj) {
-    final w = (obj['width'] as num? ?? 80).toDouble();
-    final h = (obj['height'] as num? ?? 110).toDouble();
-    final x = (obj['x'] as num).toDouble() + w / 2;
-    final y = (obj['y'] as num).toDouble() + h; // Anchor.bottomCenter → bottom of rect
-    _locker = LockerComponent(game: this)
+  // Spawns ArmarioComponent with Anchor.bottomCenter.
+  // position.x = horizontal center of Tiled rect; position.y = bottom of rect.
+  void _spawnArmario(Map<String, dynamic> obj) {
+    final w = (obj['width'] as num? ?? 90).toDouble();
+    final h = (obj['height'] as num? ?? 102).toDouble();
+    final x = (obj['x'] as num).toDouble() + w / 2;  // horizontal center
+    final y = (obj['y'] as num).toDouble() + h;       // bottom edge = floor contact
+    _armario = ArmarioComponent(game: this)
       ..position = Vector2(x, y)
-      ..priority = y.ceil();
-    world.add(_locker!);
+      ..priority = y.ceil(); // Y-sort: bottomCenter means position.y IS the floor Y
+    world.add(_armario!);
+    // Block player & zombie movement through the Tiled footprint.
+    _addCafWall(Vector2(x - w / 2, y - h), Vector2(w, h));
+  }
+
+  // Called by ArmarioComponent.open() — grants one-time +20 HP/maxHP boost.
+  void onArmarioOpened() {
+    const boost = 20.0;
+    maxHealth.value += boost;
+    currentHealth.value = math.min(maxHealth.value, currentHealth.value + boost);
+    GameState.instance.addMaxHealthBonus(20); // persists across phase transitions
+    showHudMessage('Armario aberto! Vida maxima +20.');
+    FirebaseService.instance
+        .updateInventoryItem(playerName, 'maxHealthBonus', 20)
+        .catchError((_) {});
+    FirebaseService.instance
+        .updateStats(playerName, maxHealthDelta: 20)
+        .catchError((_) {});
+    _syncAreaState().catchError((_) {});
   }
 
   // ── Tiled coordinate helpers ───────────────────────────────────────────────
-
-  // Returns the center of an object. For point objects x/y is already the point.
-  Vector2 _centerOf(Map<String, dynamic> obj) {
-    final x = (obj['x'] as num).toDouble();
-    final y = (obj['y'] as num).toDouble();
-    final w = (obj['width'] as num? ?? 0).toDouble();
-    final h = (obj['height'] as num? ?? 0).toDouble();
-    if (obj['point'] == true || (w == 0 && h == 0)) return Vector2(x, y);
-    return Vector2(x + w / 2, y + h / 2);
-  }
 
   // Returns x/y of the first object in the list (point or rect top-left).
   Vector2? _firstPoint(List<Map<String, dynamic>> objects) {
@@ -456,59 +484,79 @@ class CafeteriaGame extends FlameGame with HasCollisionDetection {
   }
 
   // Clamps a component's CENTER position so its edges never leave the map.
-  // anchor must be Anchor.center (all props and pickups use this).
-  Vector2 _clampToMap(Vector2 center, Vector2 size) => Vector2(
-        center.x.clamp(size.x / 2, _mapSize.x - size.x / 2).toDouble(),
-        center.y.clamp(size.y / 2, _mapSize.y - size.y / 2).toDouble(),
+  // Pickups use Anchor.bottomCenter — position.x = center X, position.y = floor Y.
+  Vector2 _clampToMapBottom(Vector2 pos, Vector2 size) => Vector2(
+        pos.x.clamp(size.x / 2, _mapSize.x - size.x / 2).toDouble(),
+        pos.y.clamp(size.y, _mapSize.y).toDouble(),
       );
 
-  // Display size per item kind (used for both visual sizing and boundary clamping).
+  // Returns the bottom-center of a Tiled object: (x + w/2, y + h) for rects,
+  // or (x, y) for point objects. Matches Anchor.bottomCenter placement.
+  Vector2 _floorPosOf(Map<String, dynamic> obj) {
+    final x = (obj['x'] as num).toDouble();
+    final y = (obj['y'] as num).toDouble();
+    final w = (obj['width'] as num? ?? 0).toDouble();
+    final h = (obj['height'] as num? ?? 0).toDouble();
+    if (obj['point'] == true || (w == 0 && h == 0)) return Vector2(x, y);
+    return Vector2(x + w / 2, y + h);
+  }
+
+  // Display size per item kind — base values × 1.5 scale for visibility.
   static Vector2 _pickupDisplaySize(String kind) => switch (kind) {
-    'fuse'      => Vector2(24, 24),
-    'radioPart' => Vector2(20, 20),
-    'radio'     => Vector2(32, 24),
-    'vitalBoost'=> Vector2(26, 26),
-    'pecinha'   => Vector2(30, 32),
-    _           => Vector2(36, 36),
+    'fuse'      => Vector2(60, 36),
+    'radioPart' => Vector2(42, 42),
+    'radio'     => Vector2(60, 45),
+    'vitalBoost'=> Vector2(39, 39),
+    'pecinha'   => Vector2(36, 36),
+    'senha'     => Vector2(33, 42), // folded paper — taller than wide
+    _           => Vector2(54, 54),
   };
 
   // Floor items render under the player (priority 1); interactive props stay above (6).
   static bool _isFloorItem(String kind) =>
-      kind == 'fuse' || kind == 'radioPart' || kind == 'vitalBoost' || kind == 'pecinha';
+      kind == 'fuse' || kind == 'radioPart' || kind == 'vitalBoost' ||
+      kind == 'pecinha' || kind == 'senha';
 
-  void _addPickup(String kind, Vector2 pos) {
+  void _addPickup(String kind, Vector2 floorPos) {
     if (kind == 'vitalBoost' && vitalBoostCollected) return;
     if ((kind == 'fuse' || kind == 'radioPart') && mainCompleted) return;
     final displaySize = _pickupDisplaySize(kind);
     final pickup = CafeteriaPickup(kind: kind, game: this)
-      ..position = _clampToMap(pos, displaySize)
+      ..position = _clampToMapBottom(floorPos, displaySize)
       ..size = displaySize
       ..priority = _isFloorItem(kind) ? 1 : 6;
-    // Randomise angle for floor items so they look naturally dropped.
-    if (_isFloorItem(kind)) {
-      pickup.angle = _rng.nextDouble() * math.pi * 2;
-    }
     _pickups.add(pickup);
     world.add(pickup);
   }
 
-  void _spawnInitialZombies() {
-    // Zumbi próximo — fica agressivo quando o jogador se aproxima (~200px)
-    _spawnZombie(Vector2(310, 520), passive: true);
-    // Zumbis espalhados pelo mapa
-    _spawnZombie(Vector2(750, 195), passive: true);
-    _spawnZombie(Vector2(980, 460), passive: true);
-    _spawnZombie(Vector2(360, 700), passive: true);
-  }
-
-  void _spawnZombie(Vector2 pos, {bool passive = false}) {
+  void _spawnZombie(Vector2 pos) {
     final p = player;
     if (p == null) return;
-    final z = CafeteriaZombieComponent(game: this, target: p, passive: passive)
+    final z = ZumbiComponent(game: this, target: p)
       ..position = pos
       ..priority = 15;
     _zombies.add(z);
     world.add(z);
+  }
+
+  // Spawns [count] aggressive zombies in a ring around [nearPosition].
+  // The ring radius (120–200 px) keeps zombies outside the table footprint.
+  // Each successive wave adds to the total — no cap enforced here.
+  void spawnZombieWave(int count, {required Vector2 nearPosition}) {
+    const minRadius = 120.0;
+    const maxRadius = 200.0;
+    for (var i = 0; i < count; i++) {
+      final angle = (i / count) * math.pi * 2 + _rng.nextDouble() * 0.9;
+      final radius = minRadius + _rng.nextDouble() * (maxRadius - minRadius);
+      final pos = Vector2(
+        (nearPosition.x + math.cos(angle) * radius)
+            .clamp(40.0, _mapSize.x - 40.0),
+        (nearPosition.y + math.sin(angle) * radius)
+            .clamp(40.0, _mapSize.y - 40.0),
+      );
+      _spawnZombie(pos);
+    }
+    showHudMessage('Mesa destruída! $count zumbis aparecem.');
   }
 
   // ── Update ─────────────────────────────────────────────────────────────────
@@ -578,7 +626,14 @@ class CafeteriaGame extends FlameGame with HasCollisionDetection {
         label = 'USAR PAINEL';
       }
     }
-    // Locker (only interactive while closed)
+    // Armario (only interactive before opened)
+    if (_armario != null && _armario!.isMounted && !_armario!.isOpened) {
+      if ((p.position - _armario!.position).length <= 90) {
+        nearby = _armario;
+        label = 'ABRIR ARMARIO';
+      }
+    }
+    // Fallback locker (used when JSON loading fails)
     if (_locker != null && _locker!.isMounted && !_locker!.isOpen) {
       if ((p.position - _locker!.position).length <= 80) {
         nearby = _locker;
@@ -597,30 +652,50 @@ class CafeteriaGame extends FlameGame with HasCollisionDetection {
   }
 
   void _removeDeadZombies() {
-    _zombies.removeWhere((z) => !z.isMounted || !z.isAlive);
+    // Only remove zombies that finished loading AND were then unmounted (killed).
+    // Checking isLoaded prevents purging newly-spawned zombies that are still
+    // in Flame's async onLoad queue (isMounted=false while loading).
+    _zombies.removeWhere((z) => z.isLoaded && !z.isMounted);
   }
 
   // ── Ataque do jogador ──────────────────────────────────────────────────────
   void attack() {
     if (!attackEnabled.value) return;
-    player?.startAttack();
-    _resolveAttack();
-  }
-
-  void _resolveAttack() {
     final p = player;
     if (p == null) return;
+    p.startAttack();
+
+    // Spawn a short-lived hitbox at the player's attack rect (Flame collision
+    // approach). Damage is applied via onCollisionStart on _CafSwordHitbox.
+    final r = p.attackHitRect;
+    world.add(_CafSwordHitbox(
+      game: this,
+      worldPos: Vector2(r.center.dx, r.center.dy),
+      sz: Vector2(r.width, r.height),
+    ));
+
+    // Manual backup — runs immediately before the Flame broad-phase catches up
+    // (the hitbox above fires on the next update tick). Avoids a 1-frame window
+    // where the player can tap and see no damage.
+    _resolveAttack(p);
+  }
+
+  void _resolveAttack(CafeteriaPlayerComponent p) {
     final attackRect = p.attackHitRect;
-    // Snapshot prevents ConcurrentModificationError when takeDamage removes a
-    // zombie from _zombies mid-iteration.
     for (final z in List.of(_zombies)) {
-      if (!z.isAlive || !z.isMounted) continue;
+      if (!z.isLoaded || !z.isMounted) continue;
       if (attackRect.overlaps(z.hitRect)) {
-        final wasAlive = z.isAlive;
-        z.takeDamage(9 + _rng.nextInt(3));
-        if (wasAlive && !z.isAlive) {
-          // Zombie just died — spawn impact flash at its last known position.
-          world.add(ImpactFlash(position: z.position.clone())..priority = 18);
+        final pos = z.position.clone();
+        final dead = z.takeDamage(10); // 10 dmg × 2 hits = 20 HP = 2-hit kill
+        if (dead) {
+          _zombies.remove(z);
+          z.removeFromParent();
+          world.add(ImpactFlash(position: pos)..priority = 18);
+          zombiesKilled.value++;
+          if (mission.registerKill()) {
+            _advanceMission(QuestStep.pegarPapel);
+            showHudMessage('Horda eliminada! Pegue o papel de instrucoes.');
+          }
         }
       }
     }
@@ -631,13 +706,15 @@ class CafeteriaGame extends FlameGame with HasCollisionDetection {
     final target = _nearby;
     if (target == null) return;
     if (target is MarcosComponent) {
-      if (_mainStep == 0) {
+      if (mission.currentStep == QuestStep.falarMarcos) {
         _openDialog(CafeteriaDialog.marcosIntro);
-      } else if (_mainStep == 4 && mainCompleted) {
+      } else if (mission.currentStep == QuestStep.concluirFase || mainCompleted) {
         _openDialog(CafeteriaDialog.exitChoice);
       } else {
         showHudMessage('Marcos observa em silencio.');
       }
+    } else if (target is ArmarioComponent) {
+      openLockerKeypad(); // reuses LockerKeypad overlay; routes to onLockerCorrectCode
     } else if (target is ElectricalPanelComponent) {
       _interactPanel();
     } else if (target is LockerComponent) {
@@ -655,23 +732,16 @@ class CafeteriaGame extends FlameGame with HasCollisionDetection {
         prop.breakProp();
         brokenTablesCount++;
         brokenTables.value = brokenTablesCount;
-        showHudMessage('Mesa quebrada. Barulho: $brokenTablesCount/$maxSafeBrokenTables');
         _syncAreaState().catchError((_) {});
-        if (brokenTablesCount > maxSafeBrokenTables && !zombiesAlerted) {
-          zombiesAlerted = true;
-          showHudMessage('O barulho chamou mortos!');
-          for (var i = 0; i < 4; i++) {
-            _spawnZombie(Vector2(980 + _rng.nextDouble() * 80, 160 + i * 90.0));
-          }
-        }
+        // Every table break spawns a wave of 5 zombies near the table's position.
+        spawnZombieWave(5, nearPosition: prop.position);
       case 'areaC':
-        if (!areaCQuestStarted) {
-          showHudMessage('A barricada esta presa. Fale com Marcos.');
+        if (mission.currentStep != QuestStep.coletarPecas) {
+          showHudMessage('O caminho esta bloqueado. Complete as missoes anteriores.');
           return;
         }
         prop.breakProp();
-        areaCBarricadeBroken = true;
-        showHudMessage('Area C aberta. Muitos zumbis acordaram!');
+        showHudMessage('Caminho aberto! Muitos zumbis acordaram!');
         for (var i = 0; i < 8; i++) {
           _spawnZombie(Vector2(885 + _rng.nextDouble() * 170, 210 + _rng.nextDouble() * 210));
         }
@@ -689,15 +759,6 @@ class CafeteriaGame extends FlameGame with HasCollisionDetection {
           showHudMessage('Codigo 417 completo!');
         }
         _syncAreaState().catchError((_) {});
-      case 'defense':
-        if (_mainStep < 3) {
-          showHudMessage('Ainda nao e hora de reforcar.');
-          return;
-        }
-        prop.breakProp();
-        _defensesReinforced++;
-        showHudMessage('Defesa reforcada ($_defensesReinforced/3).');
-        if (_defensesReinforced >= 3) _completeMainMissions();
       default:
         break;
     }
@@ -706,25 +767,40 @@ class CafeteriaGame extends FlameGame with HasCollisionDetection {
   void _collectPickup(CafeteriaPickup pickup) {
     switch (pickup.kind) {
       case 'radioPart':
-        if (!areaCBarricadeBroken) {
-          showHudMessage('Esta atras da barricada da Area C.');
+        if (mission.currentStep.index < QuestStep.coletarPecas.index) {
+          showHudMessage('Ainda nao e possivel coletar isso. Complete as missoes anteriores.');
           return;
         }
         pickup.collect();
-        _mainStep = 2;
-        missionText.value = 'Missao: encontre 2 fusiveis e religue o radio.';
-        showHudMessage('Bateria coletada!');
+        if (mission.currentStep == QuestStep.coletarPecas) {
+          _advanceMission(QuestStep.ligarRadio);
+          showHudMessage('Peca coletada! Agora ligue o radio.');
+        } else {
+          showHudMessage('Peca coletada.');
+        }
+      case 'senha':
+        if (mission.currentStep != QuestStep.pegarPapel) {
+          showHudMessage('Uma nota misteriosa. Volte depois.');
+          return;
+        }
+        _pendingSenhaPickup = pickup;
+        dialogOpen.value = true;
+        pauseEngine();
+        overlays.add('SenhaArmario');
       case 'fuse':
-        if (_mainStep < 2) {
+        if (mission.currentStep.index < QuestStep.pegarFusiveis.index) {
           showHudMessage('Um fusivel. Melhor usar depois.');
           return;
         }
         pickup.collect();
         _fusesInstalled++;
         showHudMessage('Fusivel coletado ($_fusesInstalled/2).');
+        if (_fusesInstalled >= 2) {
+          _advanceMission(QuestStep.ativarPainel);
+        }
       case 'radio':
-        if (!radioPowered) {
-          showHudMessage('O radio ainda nao tem energia.');
+        if (mission.currentStep != QuestStep.ligarRadio) {
+          showHudMessage('Sistemas indisponiveis. Complete as missoes anteriores.');
           return;
         }
         overlays.add('RadioTune');
@@ -747,12 +823,28 @@ class CafeteriaGame extends FlameGame with HasCollisionDetection {
         FirebaseService.instance.updateStats(playerName, maxHealthDelta: 10).catchError((_) {});
         showHudMessage('Reforco Vital! Vida maxima +10.');
         _syncAreaState().catchError((_) {});
+      case 'pecinha':
+        if (mission.currentStep != QuestStep.pegarPapel) {
+          showHudMessage('Ainda nao e o momento certo.');
+          return;
+        }
+        pickup.collect();
+        _advanceMission(QuestStep.pegarFusiveis);
+        FirebaseService.instance
+            .updateInventoryItem(playerName, 'pecinha', 1)
+            .catchError((_) {});
+        showHudMessage('Papel coletado! Colete os fusiveis.');
+        _syncAreaState().catchError((_) {});
     }
   }
 
   // ── Panel & Locker interactions ───────────────────────────────────────────
 
   void _interactPanel() {
+    if (mission.currentStep != QuestStep.ativarPainel) {
+      showHudMessage('Sistemas indisponiveis. Complete as missoes anteriores.');
+      return;
+    }
     if (_fusesInstalled < 2) {
       showHudMessage('O painel precisa de 2 fusiveis.');
       return;
@@ -775,9 +867,15 @@ class CafeteriaGame extends FlameGame with HasCollisionDetection {
     overlays.remove('LockerKeypad');
     dialogOpen.value = false;
     resumeEngine();
-    _locker?.openLocker();
-    secretCodeCompleted = true;
-    showHudMessage('Armario aberto! Coleta o Reforco Vital.');
+    // Route to the active cabinet: Tiled path (_armario) or fallback (_locker).
+    if (_armario != null && !_armario!.isOpened) {
+      _armario!.openArmario();
+      onArmarioOpened(); // +20 HP / maxHP
+    } else {
+      _locker?.openLocker();
+      secretCodeCompleted = true;
+      showHudMessage('Armario aberto! Coleta o Reforco Vital.');
+    }
     _syncAreaState().catchError((_) {});
   }
 
@@ -805,13 +903,11 @@ class CafeteriaGame extends FlameGame with HasCollisionDetection {
     resumeEngine();
     if (radioPowered) return;
     radioPowered = true;
-    _mainStep = 3;
-    missionText.value = 'Missao: reforce os 3 pontos da area segura.';
-    showHudMessage('Painel ligado! Radio disponivel.');
-    for (var i = 0; i < 3; i++) {
-      _spawnZombie(Vector2(230 + i * 110.0, 520), passive: true);
-    }
+    mainCompleted = true;
+    _advanceMission(QuestStep.concluirFase);
+    FirebaseService.instance.completeArea2(playerName).catchError((_) {});
     _syncAreaState().catchError((_) {});
+    _openDialog(CafeteriaDialog.exitChoice);
   }
 
   // ── Diálogo / estado ───────────────────────────────────────────────────────
@@ -843,9 +939,7 @@ class CafeteriaGame extends FlameGame with HasCollisionDetection {
   void chooseMarcosSecond(int option) {
     if (option == 1) marcosTrust += 1;
     if (option == 2 || option == 3) marcosTrust -= 1;
-    areaCQuestStarted = true;
-    _mainStep = 1;
-    missionText.value = 'Missao: quebre a barricada da Area C.';
+    _advanceMission(QuestStep.coletarPecas);
     closeMarcosDialog();
     _syncAreaState().catchError((_) {});
   }
@@ -889,7 +983,6 @@ class CafeteriaGame extends FlameGame with HasCollisionDetection {
   Future<void> _completeMainMissions() async {
     if (mainCompleted) return;
     mainCompleted = true;
-    _mainStep = 4;
     missionText.value = 'Area 2 concluida!';
     await FirebaseService.instance.completeArea2(playerName).catchError((_) {});
     await _syncAreaState().catchError((_) {});
@@ -913,7 +1006,37 @@ class CafeteriaGame extends FlameGame with HasCollisionDetection {
     radioTuned = true;
     if (marcosTrust >= 0) marcosTrust += 1;
     resumeEngine();
-    showHudMessage('Transmissao militar registrada.');
+    _advanceMission(QuestStep.matarHorda);
+    final p = player;
+    if (p != null) {
+      // Use Tiled spawn points, cycling through them if fewer than 10.
+      // Falls back to a single ring position so spawning never silently fails.
+      final pts = _zombieSpawnPoints.isNotEmpty
+          ? _zombieSpawnPoints
+          : List.generate(10, (k) {
+              final a = k * math.pi * 2 / 10;
+              return Vector2(
+                (p.position.x + math.cos(a) * 200).clamp(40.0, _mapSize.x - 40.0),
+                (p.position.y + math.sin(a) * 200).clamp(40.0, _mapSize.y - 40.0),
+              );
+            });
+
+      var spawnedCount = 0;
+      var idx = 0;
+      while (spawnedCount < 10) {
+        final pt = pts[idx % pts.length];
+        final z = ZumbiComponent(game: this, target: p)
+          ..position = pt.clone()
+          ..priority = 10;
+        z.isAggressive = true; // force aggression
+        _zombies.add(z);
+        world.add(z);
+        spawnedCount++;
+        idx++;
+      }
+      debugPrint('Spawned $spawnedCount zombies.');
+    }
+    showHudMessage('Transmissao registrada! Elimine a horda de zumbis.');
     _syncAreaState().catchError((_) {});
   }
 
@@ -921,6 +1044,18 @@ class CafeteriaGame extends FlameGame with HasCollisionDetection {
     overlays.remove('RadioTune');
     dialogOpen.value = false;
     resumeEngine();
+  }
+
+  void onSenhaArmarioClosed() {
+    overlays.remove('SenhaArmario');
+    dialogOpen.value = false;
+    resumeEngine();
+    _pendingSenhaPickup?.collect();
+    _pendingSenhaPickup = null;
+    secretCodeCompleted = true;
+    _advanceMission(QuestStep.pegarFusiveis);
+    showHudMessage('Codigo anotado! Colete os fusiveis.');
+    _syncAreaState().catchError((_) {});
   }
 
   // ── Dano / morte ───────────────────────────────────────────────────────────
@@ -976,13 +1111,11 @@ class CafeteriaGame extends FlameGame with HasCollisionDetection {
       return;
     }
     mainCompleted = true;
-    _mainStep = 4;
     marcosTrust = 2;
-    areaCQuestStarted = true;
-    areaCBarricadeBroken = true;
     radioPowered = true;
     radioTuned = true;
-    missionText.value = 'Area 2 concluida!';
+    _fusesInstalled = 2;
+    _advanceMission(QuestStep.concluirFase);
     FirebaseService.instance.completeArea2(playerName).catchError((_) {});
     _syncAreaState().catchError((_) {});
     _openDialog(CafeteriaDialog.reward);
@@ -1010,7 +1143,9 @@ class CafeteriaGame extends FlameGame with HasCollisionDetection {
     stimulantCount = inventory['stimulant'] ?? 0;
     stimulant.value = stimulantCount;
 
-    final bonus = inventory['maxHealthBonus'] ?? 0;
+    final firebaseBonus = inventory['maxHealthBonus'] ?? 0;
+    GameState.instance.syncMaxHealthBonus(firebaseBonus); // keep in-memory in sync
+    final bonus = GameState.instance.maxHealthBonus;
     if (bonus > 0) {
       maxHealth.value = 100 + bonus.toDouble();
       currentHealth.value = maxHealth.value;
@@ -1021,8 +1156,6 @@ class CafeteriaGame extends FlameGame with HasCollisionDetection {
     secretCodeCompleted = area2State['secretCodeCompleted'] == true;
     vitalBoostCollected = area2State['vitalBoostCollected'] == true;
     usedReviveThisArea = area2State['usedRevive'] == true;
-    areaCQuestStarted = area2State['areaCQuestStarted'] == true;
-    areaCBarricadeBroken = area2State['areaCBarricadeBroken'] == true;
     radioPowered = area2State['radioPowered'] == true;
     marcosTrust = area2State['marcosTrust'] is int ? area2State['marcosTrust'] as int : 0;
     brokenTablesCount = area2State['brokenTablesCount'] is int ? area2State['brokenTablesCount'] as int : 0;
@@ -1034,16 +1167,14 @@ class CafeteriaGame extends FlameGame with HasCollisionDetection {
     }
 
     if (mainCompleted) {
-      _mainStep = 4;
       missionText.value = 'Area 2 concluida. Explore ou siga para o CAA.';
     } else if (radioPowered) {
-      _mainStep = 3;
-      missionText.value = 'Missao: reforce os 3 pontos da area segura.';
-    } else if (areaCQuestStarted) {
-      _mainStep = areaCBarricadeBroken ? 2 : 1;
-      missionText.value = areaCBarricadeBroken
-          ? 'Missao: encontre 2 fusiveis e religue o radio.'
-          : 'Missao: quebre a barricada da Area C.';
+      _advanceMission(QuestStep.concluirFase);
+    } else {
+      final stepIndex = area2State['missionStep'] as int? ?? 0;
+      if (stepIndex > 0 && stepIndex < QuestStep.values.length) {
+        _advanceMission(QuestStep.values[stepIndex]);
+      }
     }
   }
 
@@ -1056,8 +1187,7 @@ class CafeteriaGame extends FlameGame with HasCollisionDetection {
       'marcosTrust': marcosTrust,
       'brokenTablesCount': brokenTablesCount,
       'usedRevive': usedReviveThisArea,
-      'areaCQuestStarted': areaCQuestStarted,
-      'areaCBarricadeBroken': areaCBarricadeBroken,
+      'missionStep': mission.currentStep.index,
       'radioPowered': radioPowered,
       'secretCodePieces': secretCodePieces.value,
     });
@@ -1246,193 +1376,7 @@ class CafeteriaPlayerComponent
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// CafeteriaZombieComponent — sprite animado + HP + flash + dano por toque
-// ─────────────────────────────────────────────────────────────────────────────
-class CafeteriaZombieComponent extends SpriteAnimationComponent
-    with HasGameRef<CafeteriaGame> {
-  static const double _speed = 46;
-  static const double _hitCooldown = 1.2;
-  static final Vector2 _frameSize = Vector2(148, 140);
-
-  @override
-  final CafeteriaGame game;
-  final CafeteriaPlayerComponent target;
-  bool passive;
-  bool isAlive = true;
-  int hp = 100;
-  double _hurtTimer = 0;
-  double _hitCooldownTimer = 0;
-  CafZombieAnim _currentAnim = CafZombieAnim.idle;
-  final Map<CafZombieAnim, SpriteAnimation> _animations = {};
-
-  CafeteriaZombieComponent({required this.game, required this.target, this.passive = false})
-      : super(size: Vector2(80, 80), anchor: Anchor.center);
-
-  Rect get hitRect => Rect.fromCenter(
-    center: Offset(position.x, position.y),
-    width: size.x * 0.70,
-    height: size.y * 0.72,
-  );
-
-  @override
-  Future<void> onLoad() async {
-    await super.onLoad();
-    try {
-      final sheet = await gameRef.images.load('zumbis/zumbi_normal.png');
-      _animations.addAll(_buildAnims(sheet));
-      _setAnim(CafZombieAnim.idle);
-    } catch (e) {
-      debugPrint('Zumbi sprite falhou: $e');
-    }
-    add(RectangleHitbox(
-      position: Vector2(size.x * .15, size.y * .14),
-      size: Vector2(size.x * .70, size.y * .72),
-    ));
-  }
-
-  static Map<CafZombieAnim, SpriteAnimation> _buildAnims(ui.Image img) {
-    SpriteAnimation row({required double yOffset, double st = 0.15}) =>
-        SpriteAnimation.fromFrameData(img,
-          SpriteAnimationData.sequenced(
-            amount: 4, stepTime: st,
-            textureSize: _frameSize,
-            texturePosition: Vector2(0, yOffset),
-          ));
-    return {
-      CafZombieAnim.idle: row(yOffset: 0),
-      CafZombieAnim.walkDown: row(yOffset: 0),
-      CafZombieAnim.walkRight: row(yOffset: 140),
-      CafZombieAnim.walkLeft: row(yOffset: 280),
-      CafZombieAnim.walkUp: row(yOffset: 0),
-    };
-  }
-
-  void _setAnim(CafZombieAnim next) {
-    if (_currentAnim == next && animation != null) return;
-    final a = _animations[next];
-    if (a == null) return;
-    _currentAnim = next;
-    animation = a;
-  }
-
-  void takeDamage(int dmg) {
-    if (!isAlive) return;
-    hp -= dmg;
-    if (hp <= 0) {
-      isAlive = false;
-      // Remove from the game's tracking list before leaving the component tree.
-      gameRef._zombies.remove(this);
-      removeFromParent();
-      return;
-    }
-    // Dim sprite so the player gets clear hit feedback; restored in update().
-    setOpacity(0.35);
-    _hurtTimer = 0.25;
-  }
-
-  @override
-  void update(double dt) {
-    super.update(dt);
-    if (!isAlive) return;
-
-    if (_hurtTimer > 0) {
-      _hurtTimer -= dt;
-      if (_hurtTimer <= 0) {
-        _hurtTimer = 0;
-        setOpacity(1.0);
-      }
-    }
-    if (_hitCooldownTimer > 0) _hitCooldownTimer -= dt;
-
-    if (!target.isMounted) return;
-    final dir = target.position - position;
-    final dist = dir.length;
-
-    if (dist < 30) {
-      _setAnim(CafZombieAnim.idle);
-      if (_hitCooldownTimer <= 0) {
-        _hitCooldownTimer = _hitCooldown;
-        game.damagePlayer(5);
-      }
-      return;
-    }
-
-    final aggroRange = passive ? 210.0 : 300.0;
-    if (dist < aggroRange) {
-      passive = false;
-      if (dir.x.abs() > dir.y.abs()) {
-        _setAnim(dir.x > 0 ? CafZombieAnim.walkRight : CafZombieAnim.walkLeft);
-      } else {
-        _setAnim(dir.y > 0 ? CafZombieAnim.walkDown : CafZombieAnim.walkUp);
-      }
-      final step = dir.normalized() * _speed * dt;
-      _tryMove(Vector2(step.x, 0));
-      _tryMove(Vector2(0, step.y));
-      _separateFromOthers();
-    } else {
-      _setAnim(CafZombieAnim.idle);
-    }
-  }
-
-  void _tryMove(Vector2 delta) {
-    final prev = position.clone();
-    position += delta;
-    position = Vector2(
-      position.x.clamp(size.x / 2, game._mapSize.x - size.x / 2).toDouble(),
-      position.y.clamp(size.y / 2, game._mapSize.y - size.y / 2).toDouble(),
-    );
-    if (_hitsWall()) position = prev;
-  }
-
-  bool _hitsWall() {
-    for (final w in gameRef._walls) {
-      if (w.wallRect.overlaps(hitRect)) return true;
-    }
-    return false;
-  }
-
-  void _separateFromOthers() {
-    for (final other in gameRef._zombies) {
-      if (other == this || !other.isAlive) continue;
-      final away = position - other.position;
-      final minDist = size.x * 0.50;
-      final dist = away.length;
-      if (dist < minDist && dist > 0.001) {
-        position += away.normalized() * (minDist - dist) * 0.5;
-      }
-    }
-  }
-
-  @override
-  void render(Canvas canvas) {
-    canvas.drawOval(
-      Rect.fromCenter(center: Offset(size.x / 2, size.y + 2), width: size.x * .72, height: 7),
-      Paint()..color = Colors.black.withValues(alpha: 0.30),
-    );
-    if (animation != null) {
-      super.render(canvas);
-    } else {
-      _renderFallback(canvas);
-    }
-    if (_hurtTimer > 0) {
-      final t = (_hurtTimer / 0.20).clamp(0.0, 1.0);
-      canvas.drawRect(Rect.fromLTWH(0, 0, size.x, size.y),
-        Paint()..color = Colors.red.withValues(alpha: t * 0.55));
-    }
-  }
-
-  void _renderFallback(Canvas canvas) {
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(
-        Rect.fromLTWH(size.x * .30, size.y * .33, size.x * .40, size.y * .46),
-        const Radius.circular(3)),
-      Paint()..color = const Color(0xFF4A6B30));
-    canvas.drawCircle(Offset(size.x / 2, size.y * .24), size.x * .20,
-      Paint()..color = const Color(0xFF8B9B6A));
-    canvas.drawCircle(Offset(size.x * .44, size.y * .22), 2, Paint()..color = Colors.red);
-    canvas.drawCircle(Offset(size.x * .56, size.y * .22), 2, Paint()..color = Colors.red);
-  }
-}
+// CafZombieComponent — transplantado do H15, adaptado para paredes/player do Amb2
 
 // ─────────────────────────────────────────────────────────────────────────────
 // MarcosComponent
@@ -1489,10 +1433,28 @@ class MarcosComponent extends SpriteComponent with HasGameRef<CafeteriaGame> {
 // CafWall — parede de colisão simples
 // ─────────────────────────────────────────────────────────────────────────────
 class CafWall extends PositionComponent {
+  static bool showDebug = false;
+
   CafWall({required Vector2 position, required Vector2 size})
       : super(position: position, size: size);
 
   Rect get wallRect => Rect.fromLTWH(position.x, position.y, size.x, size.y);
+
+  @override
+  void render(Canvas canvas) {
+    if (!showDebug) return;
+    canvas.drawRect(
+      size.toRect(),
+      Paint()..color = const Color(0x5500FF44),
+    );
+    canvas.drawRect(
+      size.toRect(),
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2
+        ..color = const Color(0xFF00FF44),
+    );
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1521,7 +1483,6 @@ class CafeteriaProp extends SpriteComponent with HasGameRef<CafeteriaGame> {
     'areaC' => 'QUEBRAR BARRICADA',
     'secret1' || 'secret2' || 'secret3' => 'QUEBRAR BARRICADA',
     'lockedRoom' => 'DIGITAR CODIGO',
-    'defense' => 'REFORCAR',
     _ => 'INTERAGIR',
   };
 
@@ -1537,8 +1498,6 @@ class CafeteriaProp extends SpriteComponent with HasGameRef<CafeteriaGame> {
     }
   }
 
-  // Flame 1.37+ asserts sprite != null in SpriteComponent.onMount().
-  // Props without an asset (lockedRoom, defense) use _renderFallback() instead.
   @override
   void onMount() {
     if (sprite != null) super.onMount();
@@ -1578,7 +1537,6 @@ class CafeteriaProp extends SpriteComponent with HasGameRef<CafeteriaGame> {
     final color = switch (kind) {
       'table' => const Color(0xFF6B4A2E),
       'areaC' => const Color(0xFF3F2B1B),
-      'defense' => const Color(0xFF4B5563),
       _ => const Color(0xFF5A3A23),
     };
     canvas.drawRRect(
@@ -1596,8 +1554,10 @@ class CafeteriaProp extends SpriteComponent with HasGameRef<CafeteriaGame> {
 // automatically falls back to a colored circle while the asset is missing.
 // ─────────────────────────────────────────────────────────────────────────────
 class CafeteriaPickup extends SpriteComponent {
+  // Anchor.bottomCenter: position.y == floor contact point.
+  // Sprites rest on the surface rather than hovering at sprite-centre height.
   CafeteriaPickup({required this.kind, required this.game})
-      : super(size: Vector2(40, 40), anchor: Anchor.center);
+      : super(size: Vector2(40, 40), anchor: Anchor.bottomCenter);
 
   final String kind;
   final CafeteriaGame game;
@@ -1605,10 +1565,11 @@ class CafeteriaPickup extends SpriteComponent {
 
   // Map each item kind to its asset path. Add new entries as sprites are created.
   static const _kAssets = <String, String>{
-    'fuse': 'objects/fusivel.png',
-    // 'radioPart' : 'objects/radio_part.png',
-    // 'radioPanel': 'objects/painel_radio.png',
-    // 'radio'     : 'objects/radio.png',
+    'fuse':      'objects/fusivel.png',
+    'pecinha':   'objects/pecinha.png',
+    'radio':     'objects/radio.png',
+    'radioPart': 'objects/pecaradio.png',
+    'senha':     'objects/mapa.png',
     // 'vitalBoost': 'objects/vital_boost.png',
   };
 
@@ -1618,6 +1579,8 @@ class CafeteriaPickup extends SpriteComponent {
     'radioPanel': Color(0xFF94A3B8),
     'radio':      Color(0xFF22C55E),
     'vitalBoost': Color(0xFFEF4444),
+    'pecinha':    Color(0xFF22D3EE),
+    'senha':      Color(0xFFFEF9E7),
   };
 
   String get label => switch (kind) {
@@ -1626,6 +1589,8 @@ class CafeteriaPickup extends SpriteComponent {
     'radioPanel' => 'USAR PAINEL',
     'radio'      => 'SINTONIZAR',
     'vitalBoost' => 'COLETAR',
+    'pecinha'    => 'PEGAR PECA',
+    'senha'      => 'LER NOTA',
     _            => 'PEGAR',
   };
 
@@ -1636,8 +1601,9 @@ class CafeteriaPickup extends SpriteComponent {
     if (path != null) {
       try {
         sprite = Sprite(await game.images.load(path));
+        debugPrint('CafeteriaPickup[$kind]: $path loaded OK');
       } catch (e) {
-        debugPrint('CafeteriaPickup[$kind] sprite failed: $e');
+        debugPrint('ERROR: Asset not found — $path ($e)');
       }
     }
   }
@@ -1674,6 +1640,27 @@ class CafeteriaPickup extends SpriteComponent {
   }
 
   void _renderFallback(Canvas canvas) {
+    if (kind == 'senha') {
+      // Paper icon with golden border
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(size.toRect(), const Radius.circular(2)),
+        Paint()..color = const Color(0xFFFEF9E7),
+      );
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(size.toRect().deflate(1), const Radius.circular(1)),
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.5
+          ..color = const Color(0xFFD4A017),
+      );
+      // Three "text" lines to suggest a document
+      final linePaint = Paint()..color = const Color(0xFF9B7E35)..strokeWidth = 1;
+      for (var i = 0; i < 3; i++) {
+        final y = size.y * (0.30 + i * 0.20);
+        canvas.drawLine(Offset(size.x * 0.18, y), Offset(size.x * 0.82, y), linePaint);
+      }
+      return;
+    }
     final color = _kFallbackColors[kind] ?? Colors.white;
     final r = size.x / 2 - 2;
     final c = Offset(size.x / 2, size.y / 2);
@@ -1710,9 +1697,9 @@ class ElectricalPanelComponent extends SpriteComponent {
   @override
   Future<void> onLoad() async {
     await super.onLoad();
-    // try {
-    //   sprite = Sprite(await game.images.load('objects/painel_eletrico.png'));
-    // } catch (_) {}
+    try {
+      sprite = Sprite(await game.images.load('objects/painelfusivel.png'));
+    } catch (_) {}
   }
 
   @override
@@ -1957,5 +1944,198 @@ class CafeteriaFallbackMap extends PositionComponent {
     canvas.drawRect(
       const Rect.fromLTWH(560, 590, 300, 175),
       Paint()..color = const Color(0x3322C55E));
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ArmarioComponent — password-protected cabinet with a +20 HP/maxHP reward.
+//
+// Sprite loading order:
+//   1. armario.png          (dedicated closed sprite — add to assets when ready)
+//   2. armarioabertoefechado.png left half  (fallback closed state)
+//   3. Pure Canvas fallback if both assets fail.
+//
+// Interaction flow:
+//   Player walks within 90 px → "ABRIR ARMARIO" prompt.
+//   Player taps INTERAGIR → CafeteriaGame.openLockerKeypad() → overlay.
+//   Player enters correct PIN → onLockerCorrectCode() → openArmario().
+//   openArmario(): sprite → open state, isOpened = true (idempotent).
+//   CafeteriaGame.onArmarioOpened(): maxHealth/currentHealth += 20.
+//
+// Collision:
+//   RectangleHitbox (passive) — for future enemy collision callbacks.
+//   _spawnArmario() also adds a CafWall at the same footprint so the
+//   player movement system (rect-based, not Flame events) is blocked.
+// ─────────────────────────────────────────────────────────────────────────────
+class ArmarioComponent extends SpriteComponent {
+  // Fixed display size: 80×140 ensures the cabinet is visually taller than
+  // the 64px player. Anchor.bottomCenter: position.y == floor contact point.
+  ArmarioComponent({required this.game})
+      : super(size: Vector2(80, 140), anchor: Anchor.bottomCenter);
+
+  final CafeteriaGame game;
+  bool isOpened = false;
+
+  Sprite? _openSprite;
+
+  @override
+  Future<void> onLoad() async {
+    await super.onLoad();
+
+    // Attempt 1 — dedicated armario.png.
+    bool loaded = false;
+    try {
+      final img = await game.images.load('objects/armario.png');
+      sprite = Sprite(img);
+      loaded = true;
+    } catch (e) {
+      debugPrint('ERROR: Asset not found — objects/armario.png ($e)');
+    }
+
+    // Attempt 2 — left half of armarioabertoefechado.png.
+    if (!loaded) {
+      try {
+        final img =
+            await game.images.load('objects/armarioabertoefechado.png');
+        final halfW = (img.width / 2).toDouble();
+        final h = img.height.toDouble();
+        sprite = Sprite(img,
+            srcPosition: Vector2.zero(), srcSize: Vector2(halfW, h));
+        _openSprite = Sprite(img,
+            srcPosition: Vector2(halfW, 0), srcSize: Vector2(halfW, h));
+      } catch (e) {
+        debugPrint('ERROR: Asset not found — objects/armarioabertoefechado.png ($e)');
+      }
+    }
+
+    add(RectangleHitbox(collisionType: CollisionType.passive)
+      ..debugMode = false);
+  }
+
+  @override
+  void onMount() {
+    if (sprite != null) super.onMount();
+  }
+
+  // Called after correct PIN — flips sprite to open state (idempotent).
+  void openArmario() {
+    if (isOpened) return;
+    isOpened = true;
+    if (_openSprite != null) sprite = _openSprite;
+  }
+
+  // Y-sort: with Anchor.bottomCenter, position.y IS the floor contact point.
+  @override
+  void update(double dt) {
+    super.update(dt);
+    priority = position.y.ceil();
+  }
+
+  @override
+  void render(Canvas canvas) {
+    canvas.drawOval(
+      Rect.fromCenter(
+        center: Offset(size.x / 2, size.y + 4),
+        width: size.x * 0.80,
+        height: 10,
+      ),
+      Paint()..color = Colors.black.withValues(alpha: 0.35),
+    );
+    if (sprite != null) {
+      super.render(canvas);
+    } else {
+      _renderFallback(canvas);
+    }
+  }
+
+  void _renderFallback(Canvas canvas) {
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(size.toRect(), const Radius.circular(4)),
+      Paint()
+        ..color =
+            isOpened ? const Color(0xFF111827) : const Color(0xFF374151),
+    );
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(size.toRect().deflate(2), const Radius.circular(3)),
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2
+        ..color =
+            isOpened ? const Color(0xFF4B5563) : const Color(0xFF9CA3AF),
+    );
+    if (!isOpened) {
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(
+          Rect.fromCenter(
+              center: Offset(size.x * 0.88, size.y / 2), width: 6, height: 20),
+          const Radius.circular(2),
+        ),
+        Paint()..color = const Color(0xFF9CA3AF),
+      );
+    } else {
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(
+            size.toRect().deflate(10), const Radius.circular(3)),
+        Paint()..color = const Color(0xFF064E3B),
+      );
+    }
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// _CafSwordHitbox — short-lived Flame collision hitbox for melee attacks.
+//
+// Lifecycle: spawned once per attack(), lives ~0.08 s (5 frames at 60 fps),
+// then removes itself. During that window Flame's broad-phase detects overlap
+// with CafeteriaZombieComponent.RectangleHitbox (CollisionType.active).
+//
+// onCollisionStart fires once per zombie per swing (_fired guard).
+// The manual _resolveAttack() runs in the same frame as a zero-latency backup;
+// this hitbox provides the CollisionCallbacks path the user requested.
+// ─────────────────────────────────────────────────────────────────────────────
+class _CafSwordHitbox extends PositionComponent with CollisionCallbacks {
+  _CafSwordHitbox({
+    required this.game,
+    required Vector2 worldPos,
+    required Vector2 sz,
+  }) : super(position: worldPos, size: sz, anchor: Anchor.center);
+
+  final CafeteriaGame game;
+  bool _fired = false;
+  double _life = 0;
+  static const double _maxLife = 0.08; // ~5 frames
+
+  @override
+  Future<void> onLoad() async {
+    await super.onLoad();
+    debugMode = false;
+    add(RectangleHitbox(collisionType: CollisionType.active)..debugMode = false);
+  }
+
+  @override
+  void onCollisionStart(Set<Vector2> intersectionPoints, PositionComponent other) {
+    super.onCollisionStart(intersectionPoints, other);
+    if (_fired) return;
+    // `other` is the zombie's RectangleHitbox; its parent is the zombie.
+    final zombie = other.parent;
+    if (zombie is ZumbiComponent) {
+      _fired = true;
+      debugPrint('[COMBAT] SwordHitbox → zombie hit (CollisionCallbacks path)');
+      final pos = zombie.position.clone();
+      final dead = zombie.takeDamage(10);
+      if (dead) {
+        game._zombies.remove(zombie);
+        zombie.removeFromParent();
+        game.world.add(ImpactFlash(position: pos)..priority = 18);
+        game.zombiesKilled.value++;
+      }
+    }
+  }
+
+  @override
+  void update(double dt) {
+    super.update(dt);
+    _life += dt;
+    if (_life >= _maxLife) removeFromParent();
   }
 }

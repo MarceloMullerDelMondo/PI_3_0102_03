@@ -10,6 +10,7 @@ import 'package:flame_tiled/flame_tiled.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../services/audio_manager.dart';
 import '../services/firebase_service.dart';
 
 // ── Quest 2 enums — declared at top level so H15Game fields can reference them
@@ -86,6 +87,7 @@ class H15Game extends FlameGame with HasCollisionDetection {
   @override
   Future<void> onLoad() async {
     await super.onLoad();
+    MusicManager.instance.stopMenuBgm();
 
     await SystemChrome.setPreferredOrientations([
       DeviceOrientation.landscapeLeft,

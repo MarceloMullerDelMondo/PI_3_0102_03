@@ -2,6 +2,9 @@ import 'package:flame_audio/flame_audio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+/// Convenience alias — both names refer to the same singleton.
+typedef MusicManager = AudioManager;
+
 /// Global singleton that owns the menu BGM lifecycle.
 ///
 /// Rules:

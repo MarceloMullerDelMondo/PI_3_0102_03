@@ -9,6 +9,7 @@ import 'package:flame/game.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../services/audio_manager.dart';
 import '../services/firebase_service.dart';
 import 'h15_game.dart' show InvisibleWall, PlayerComponent, SolidObstacle;
 
@@ -76,6 +77,7 @@ class CAALevel extends FlameGame with HasCollisionDetection {
   @override
   Future<void> onLoad() async {
     await super.onLoad();
+    MusicManager.instance.stopMenuBgm();
 
     camera.viewfinder.anchor = Anchor.center;
     camera.viewfinder.position = _fallbackSpawn.clone();

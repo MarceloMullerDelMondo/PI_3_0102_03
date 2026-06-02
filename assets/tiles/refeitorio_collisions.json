@@ -213,51 +213,6 @@
                 }, 
                 {
                  "height":0,
-                 "id":11,
-                 "name":"",
-                 "opacity":1,
-                 "polygon":[
-                        {
-                         "x":0,
-                         "y":0
-                        }, 
-                        {
-                         "x":-2,
-                         "y":134
-                        }, 
-                        {
-                         "x":54,
-                         "y":134
-                        }, 
-                        {
-                         "x":56,
-                         "y":264
-                        }, 
-                        {
-                         "x":-428,
-                         "y":262
-                        }, 
-                        {
-                         "x":-428,
-                         "y":134
-                        }, 
-                        {
-                         "x":-58,
-                         "y":132
-                        }, 
-                        {
-                         "x":-58,
-                         "y":-4
-                        }],
-                 "rotation":0,
-                 "type":"",
-                 "visible":true,
-                 "width":0,
-                 "x":540,
-                 "y":270
-                }, 
-                {
-                 "height":0,
                  "id":12,
                  "name":"",
                  "opacity":1,
@@ -321,50 +276,50 @@
                         }, 
                         {
                          "x":352,
-                         "y":26.8712
+                         "y":20.7080427969457
                         }, 
                         {
                          "x":372,
-                         "y":26.8712
+                         "y":20.7080427969457
                         }, 
                         {
                          "x":372,
-                         "y":-35.8282
+                         "y":-27.6106723532083
                         }, 
                         {
                          "x":486,
-                         "y":-34.0368
+                         "y":-26.2301464419557
                         }, 
                         {
                          "x":484,
-                         "y":-166.601
+                         "y":-128.389526259116
                         }, 
                         {
                          "x":262,
-                         "y":-166.601
+                         "y":-128.389526259116
                         }, 
                         {
                          "x":264,
-                         "y":-265.129
+                         "y":-204.319222018794
                         }, 
                         {
                          "x":250,
-                         "y":-263.337
+                         "y":-202.938233723067
                         }, 
                         {
                          "x":250,
-                         "y":-168.393
+                         "y":-129.770514554842
                         }, 
                         {
                          "x":-2,
-                         "y":-170.184
+                         "y":-131.150732209779
                         }],
                  "rotation":0,
                  "type":"",
                  "visible":true,
                  "width":0,
                  "x":112,
-                 "y":1155.13
+                 "y":1161.29315720305
                 }, 
                 {
                  "height":0,
@@ -560,8 +515,7 @@
                  "width":230,
                  "x":1110,
                  "y":1254
-                },
-            
+                }, 
                 {
                  "height":100,
                  "id":46,
@@ -573,7 +527,8 @@
                  "width":144,
                  "x":1198,
                  "y":1032
-                }, 
+                },
+            
                 {
                  "height":136,
                  "id":47,
@@ -597,6 +552,42 @@
                  "width":100,
                  "x":772,
                  "y":972
+                }, 
+                {
+                 "height":116.724258463997,
+                 "id":49,
+                 "name":"",
+                 "opacity":1,
+                 "rotation":0,
+                 "type":"",
+                 "visible":true,
+                 "width":118.637770897833,
+                 "x":468.810546289823,
+                 "y":411.405173274743
+                }, 
+                {
+                 "height":116.724258463997,
+                 "id":50,
+                 "name":"",
+                 "opacity":1,
+                 "rotation":0,
+                 "type":"",
+                 "visible":true,
+                 "width":243.016079097174,
+                 "x":122.464795765505,
+                 "y":413.318685708579
+                }, 
+                {
+                 "height":147.340457405373,
+                 "id":51,
+                 "name":"",
+                 "opacity":1,
+                 "rotation":0,
+                 "type":"",
+                 "visible":true,
+                 "width":3.82702486767204,
+                 "x":476.464596025167,
+                 "y":264.06471586937
                 }],
          "opacity":1,
          "type":"objectgroup",
@@ -608,10 +599,21 @@
          "draworder":"topdown",
          "id":16,
          "name":"pecaradio",
+         "objects":[],
+         "opacity":1,
+         "type":"objectgroup",
+         "visible":true,
+         "x":0,
+         "y":0
+        }, 
+        {
+         "draworder":"topdown",
+         "id":21,
+         "name":"papelsenha",
          "objects":[
                 {
                  "height":0,
-                 "id":37,
+                 "id":56,
                  "name":"",
                  "opacity":1,
                  "point":true,
@@ -619,8 +621,8 @@
                  "type":"",
                  "visible":true,
                  "width":0,
-                 "x":150,
-                 "y":940
+                 "x":164.562069309897,
+                 "y":910.831918505942
                 }],
          "opacity":1,
          "type":"objectgroup",
@@ -653,56 +655,6 @@
         }, 
         {
          "draworder":"topdown",
-         "id":18,
-         "name":"reforco defesa",
-         "objects":[
-                {
-                 "height":0,
-                 "id":40,
-                 "name":"",
-                 "opacity":1,
-                 "point":true,
-                 "rotation":0,
-                 "type":"",
-                 "visible":true,
-                 "width":0,
-                 "x":476,
-                 "y":1260
-                }, 
-                {
-                 "height":0,
-                 "id":41,
-                 "name":"",
-                 "opacity":1,
-                 "point":true,
-                 "rotation":0,
-                 "type":"",
-                 "visible":true,
-                 "width":0,
-                 "x":1554,
-                 "y":1138
-                }, 
-                {
-                 "height":0,
-                 "id":42,
-                 "name":"",
-                 "opacity":1,
-                 "point":true,
-                 "rotation":0,
-                 "type":"",
-                 "visible":true,
-                 "width":0,
-                 "x":1510,
-                 "y":326
-                }],
-         "opacity":1,
-         "type":"objectgroup",
-         "visible":true,
-         "x":0,
-         "y":0
-        }, 
-        {
-         "draworder":"topdown",
          "id":14,
          "name":"player spawn",
          "objects":[
@@ -716,9 +668,80 @@
                  "type":"",
                  "visible":true,
                  "width":0,
-                 "x":1740,
-                 "y":1262
+                 "x":679.914111654849,
+                 "y":1344.28103465495
+                }, 
+                {
+                 "height":264.06471586937,
+                 "id":52,
+                 "name":"",
+                 "opacity":1,
+                 "rotation":0,
+                 "type":"",
+                 "visible":true,
+                 "width":1.91351243383599,
+                 "x":866.821132527714,
+                 "y":1075.39398781584
+                }, 
+                {
+                 "height":264.06471586937,
+                 "id":53,
+                 "name":"",
+                 "opacity":1,
+                 "rotation":0,
+                 "type":"",
+                 "visible":true,
+                 "width":0,
+                 "x":1341.37221611905,
+                 "y":895.523819035254
+                }, 
+                {
+                 "height":105.243183860981,
+                 "id":54,
+                 "name":"",
+                 "opacity":1,
+                 "rotation":0,
+                 "type":"",
+                 "visible":true,
+                 "width":0,
+                 "x":1331.80465394987,
+                 "y":258.324178567862
                 }],
+         "opacity":1,
+         "type":"objectgroup",
+         "visible":true,
+         "x":0,
+         "y":0
+        }, 
+        {
+         "draworder":"topdown",
+         "id":19,
+         "name":"zumbispawn",
+         "objects":[
+                {
+                 "height":0,
+                 "id":55,
+                 "name":"",
+                 "opacity":1,
+                 "point":true,
+                 "rotation":0,
+                 "type":"",
+                 "visible":true,
+                 "width":0,
+                 "x":1165.32907220613,
+                 "y":769.231998402077
+                }],
+         "opacity":1,
+         "type":"objectgroup",
+         "visible":true,
+         "x":0,
+         "y":0
+        }, 
+        {
+         "draworder":"topdown",
+         "id":20,
+         "name":"Camada de Objetos 15",
+         "objects":[],
          "opacity":1,
          "type":"objectgroup",
          "visible":true,
@@ -823,8 +846,8 @@
                  "type":"",
                  "visible":true,
                  "width":0,
-                 "x":1222,
-                 "y":358
+                 "x":1212.43243783082,
+                 "y":367.56756216918
                 }],
          "opacity":1,
          "type":"objectgroup",
@@ -836,19 +859,7 @@
          "draworder":"topdown",
          "id":6,
          "name":"table_front",
-         "objects":[
-                {
-                 "height":38,
-                 "id":23,
-                 "name":"",
-                 "opacity":1,
-                 "rotation":0,
-                 "type":"",
-                 "visible":true,
-                 "width":146,
-                 "x":244,
-                 "y":308
-                }],
+         "objects":[],
          "opacity":1,
          "type":"objectgroup",
          "visible":true,
@@ -859,31 +870,7 @@
          "draworder":"topdown",
          "id":7,
          "name":"table_s",
-         "objects":[
-                {
-                 "height":36,
-                 "id":24,
-                 "name":"",
-                 "opacity":1,
-                 "rotation":0,
-                 "type":"",
-                 "visible":true,
-                 "width":132,
-                 "x":618,
-                 "y":318
-                }, 
-                {
-                 "height":74,
-                 "id":31,
-                 "name":"",
-                 "opacity":1,
-                 "rotation":0,
-                 "type":"",
-                 "visible":true,
-                 "width":108,
-                 "x":1388,
-                 "y":652
-                }],
+         "objects":[],
          "opacity":1,
          "type":"objectgroup",
          "visible":true,
@@ -894,66 +881,19 @@
          "draworder":"topdown",
          "id":8,
          "name":"table_e",
-         "objects":[
-                {
-                 "height":34,
-                 "id":25,
-                 "name":"",
-                 "opacity":1,
-                 "rotation":0,
-                 "type":"",
-                 "visible":true,
-                 "width":162,
-                 "x":926,
-                 "y":292
-                }, 
-                {
-                 "height":40,
-                 "id":26,
-                 "name":"",
-                 "opacity":1,
-                 "rotation":0,
-                 "type":"",
-                 "visible":true,
-                 "width":134,
-                 "x":182,
-                 "y":834
-                }],
+         "objects":[],
          "opacity":1,
          "type":"objectgroup",
          "visible":true,
          "x":0,
          "y":0
-        }, 
+        },
+    
         {
          "draworder":"topdown",
          "id":9,
          "name":"table_ne",
-         "objects":[
-                {
-                 "height":124,
-                 "id":27,
-                 "name":"",
-                 "opacity":1,
-                 "rotation":0,
-                 "type":"",
-                 "visible":true,
-                 "width":52,
-                 "x":800,
-                 "y":612
-                }, 
-                {
-                 "height":114,
-                 "id":28,
-                 "name":"",
-                 "opacity":1,
-                 "rotation":0,
-                 "type":"",
-                 "visible":true,
-                 "width":56,
-                 "x":1078,
-                 "y":622
-                }],
+         "objects":[],
          "opacity":1,
          "type":"objectgroup",
          "visible":true,
@@ -963,7 +903,7 @@
         {
          "draworder":"topdown",
          "id":11,
-         "name":"pecinha",
+         "name":"pecaradio",
          "objects":[
                 {
                  "capsule":true,
@@ -984,8 +924,8 @@
          "x":0,
          "y":0
         }],
- "nextlayerid":19,
- "nextobjectid":49,
+ "nextlayerid":22,
+ "nextobjectid":57,
  "orientation":"orthogonal",
  "renderorder":"right-down",
  "tiledversion":"1.12.1",

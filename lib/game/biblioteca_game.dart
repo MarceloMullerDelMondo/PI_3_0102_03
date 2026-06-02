@@ -10,6 +10,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../models/game_state.dart';
+import '../services/audio_manager.dart';
 import '../services/firebase_service.dart';
 import 'base_hud_component.dart';
 import 'h15_game.dart' show PlayerComponent, SolidObstacle;
@@ -80,6 +81,7 @@ class BibliotecaGame extends FlameGame with HasCollisionDetection {
   Future<void> onLoad() async {
     debugMode = false;
     await super.onLoad();
+    MusicManager.instance.stopMenuBgm();
     camera.viewfinder.anchor = Anchor.center;
 
     camera.viewport.add(hud);

@@ -9,6 +9,7 @@ import 'package:flame/experimental.dart' show Rectangle;
 import 'package:flame/game.dart';
 import 'package:flutter/material.dart';
 
+import '../services/audio_manager.dart';
 import '../services/firebase_service.dart';
 import 'h15_game.dart' show InvisibleWall, PlayerComponent, SolidObstacle;
 
@@ -60,6 +61,7 @@ class ReitoriaLevel extends FlameGame with HasCollisionDetection {
   @override
   Future<void> onLoad() async {
     await super.onLoad();
+    MusicManager.instance.stopMenuBgm();
 
     camera.viewfinder.anchor = Anchor.center;
     camera.viewfinder.position = _playerSpawn.clone();
